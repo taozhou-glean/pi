@@ -335,6 +335,21 @@ function buildAuthorizeUrl(baseUrl: string, clientId: string, challenge: string,
 	return `${baseUrl}/oauth/authorize?${params.toString()}`;
 }
 
+/** Model IDs that are relevant for chat/coding use (filters out fine-tunes, embeddings, audio, etc.) */
+function isGleanChatModel(modelId: string): boolean {
+	if (modelId.startsWith("ft:") || modelId.includes(":ft-")) return false;
+	if (/^(text-embedding|whisper|tts|omni-moderation|davinci|babbage|curie|ada)/.test(modelId)) return false;
+	if (/^(gpt-audio|gpt-image|gpt-realtime|chatgpt-image|sora|computer-use)/.test(modelId)) return false;
+	if (modelId.includes("-alpha") || modelId.includes("alpha-")) return false;
+	if (/-(transcribe|tts|search-preview|search-api|diarize)/.test(modelId)) return false;
+	// Keep: gpt-4*, gpt-5*, o1*, o3*, o4*, claude-*, chat-latest
+	return /^(gpt-[45]|o[134]|chat-latest)/.test(modelId);
+}
+
+function isGleanAnthropicModel(modelId: string): boolean {
+	return modelId.startsWith("claude-");
+}
+
 function gleanModelSupportsReasoning(modelId: string): boolean {
 	return /^(gpt-5|o[134]|o4)/.test(modelId);
 }
@@ -483,4 +498,54 @@ export function createGleanProviderConfig(): ProviderConfigInput {
 			...GLEAN_ANTHROPIC_MODEL_IDS.map(createGleanAnthropicModel),
 		],
 	};
+}
+
+/**
+ * Fetch available models from the Glean API.
+ *
+ * Queries both the OpenAI-compatible and Anthropic model endpoints,
+ * filters to chat-capable models, and returns ProviderConfigInput models.
+ * Returns undefined if the fetch fails (caller should keep hardcoded fallback).
+ */
+export async function fetchGleanModels(
+	baseUrl: string,
+	accessToken: string,
+): Promise<NonNullable<ProviderConfigInput["models"]> | undefined> {
+	const normalizedBase = normalizeGleanBaseUrl(baseUrl);
+	const headers = {
+		Authorization: `Bearer ${accessToken}`,
+		"X-Glean-Metadata": "mdm",
+	};
+
+	type ModelsResponse = { data?: Array<{ id: string }> };
+
+	async function fetchModelList(url: string, extraHeaders?: Record<string, string>): Promise<string[]> {
+		try {
+			const response = await fetch(url, {
+				headers: { ...headers, ...extraHeaders },
+				signal: AbortSignal.timeout(10_000),
+			});
+			if (!response.ok) return [];
+			const data = (await response.json()) as ModelsResponse;
+			return data.data?.map((m) => m.id) ?? [];
+		} catch {
+			return [];
+		}
+	}
+
+	const [openaiModels, anthropicModels] = await Promise.all([
+		fetchModelList(`${normalizedBase}/rest/api/v1/openai/v1/models`),
+		fetchModelList(`${normalizedBase}/rest/api/v1/anthropic/v1/models`, {
+			"anthropic-version": "2023-06-01",
+		}),
+	]);
+
+	if (openaiModels.length === 0 && anthropicModels.length === 0) {
+		return undefined;
+	}
+
+	const chatModels = openaiModels.filter(isGleanChatModel).map(createGleanModel);
+	const claudeModels = anthropicModels.filter(isGleanAnthropicModel).map(createGleanAnthropicModel);
+
+	return [...chatModels, ...claudeModels];
 }

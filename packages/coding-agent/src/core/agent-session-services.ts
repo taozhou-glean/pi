@@ -6,7 +6,12 @@ import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { connectGleanMcp } from "./glean-mcp.ts";
-import { createGleanProviderConfig, GLEAN_PROVIDER_ID } from "./glean-provider.ts";
+import {
+	createGleanProviderConfig,
+	fetchGleanModels,
+	GLEAN_DEFAULT_BASE_URL,
+	GLEAN_PROVIDER_ID,
+} from "./glean-provider.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import {
 	DefaultResourceLoader,
@@ -176,11 +181,24 @@ export async function createAgentSessionServices(
 	extensionsResult.runtime.pendingProviderRegistrations = [];
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 
-	// Connect to Glean MCP if authenticated
+	// Connect to Glean MCP if authenticated, and fetch dynamic model list
 	let mcpTools: ToolDefinition[] = [];
 	let mcpDisconnect: (() => Promise<void>) | undefined;
 	const gleanAccessToken = await authStorage.getApiKey(GLEAN_PROVIDER_ID);
 	if (gleanAccessToken) {
+		// Fetch real model list and re-register provider with dynamic models
+		const gleanCred = authStorage.getAll()[GLEAN_PROVIDER_ID];
+		const tenantBaseUrl =
+			(gleanCred?.type === "oauth" ? (gleanCred as { baseUrl?: string }).baseUrl : undefined) ??
+			GLEAN_DEFAULT_BASE_URL;
+		const fetchedModels = await fetchGleanModels(tenantBaseUrl, gleanAccessToken);
+		if (fetchedModels && fetchedModels.length > 0) {
+			modelRegistry.registerProvider(GLEAN_PROVIDER_ID, {
+				...createGleanProviderConfig(),
+				models: fetchedModels,
+			});
+		}
+
 		const mcpResult = await connectGleanMcp({ accessToken: gleanAccessToken });
 		if (mcpResult) {
 			mcpTools = mcpResult.tools;
