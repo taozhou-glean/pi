@@ -412,6 +412,15 @@ select:focus {
 	transform: none;
 }
 
+.session-item:disabled {
+	cursor: wait;
+	opacity: 0.7;
+}
+
+.session-item.loading {
+	background: color-mix(in srgb, var(--accent-soft) 72%, var(--nav-control-bg));
+}
+
 .session-item.active {
 	box-shadow:
 		inset 3px 0 0 var(--accent-strong),
@@ -596,6 +605,22 @@ body.resizing-panels {
 	display: flex;
 	flex-direction: column;
 	gap: 22px;
+	transition: opacity 120ms ease;
+}
+
+.messages.loading-session {
+	opacity: 0.58;
+}
+
+.load-older {
+	align-self: center;
+	min-height: 32px;
+	padding: 0 12px;
+	border-color: var(--line-strong);
+	background: var(--secondary-bg);
+	color: var(--secondary-ink);
+	font-size: 12px;
+	box-shadow: none;
 }
 
 .empty {

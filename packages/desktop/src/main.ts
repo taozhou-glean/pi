@@ -284,25 +284,33 @@ async function createDesktopSession(
 async function createDesktopSessionInner(
 	options: { cwd?: string; sessionPath?: string; fresh?: boolean } = {},
 ): Promise<DesktopState> {
+	let targetCwd = resolve(options.cwd ?? currentCwd);
+	if (options.sessionPath) {
+		const opened = SessionManager.open(options.sessionPath);
+		targetCwd = resolve(opened.getCwd());
+	}
+	const previousServices = currentServices;
+	const canReuseServices = Boolean(previousServices && previousServices.cwd === targetCwd);
+
 	unsubscribeSession?.();
 	unsubscribeSession = undefined;
 	current?.session.dispose();
 	current = undefined;
-	await currentServices?.mcpDisconnect?.();
-	currentServices = undefined;
-
-	let sessionManager: SessionManager;
-	if (options.sessionPath) {
-		const opened = SessionManager.open(options.sessionPath);
-		currentCwd = resolve(opened.getCwd());
-	} else {
-		currentCwd = resolve(options.cwd ?? currentCwd);
+	if (!canReuseServices) {
+		await currentServices?.mcpDisconnect?.();
+		currentServices = undefined;
 	}
 
-	currentServices = await createAgentSessionServices({
-		cwd: currentCwd,
-		providerAllowlist,
-	});
+	let sessionManager: SessionManager;
+	currentCwd = targetCwd;
+
+	currentServices =
+		canReuseServices && previousServices
+			? previousServices
+			: await createAgentSessionServices({
+					cwd: currentCwd,
+					providerAllowlist,
+				});
 	currentSessionDir = resolveSessionDir(currentServices.settingsManager.getSessionDir());
 	if (options.sessionPath) {
 		sessionManager = SessionManager.open(options.sessionPath, currentSessionDir, currentCwd);

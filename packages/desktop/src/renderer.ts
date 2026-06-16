@@ -120,6 +120,10 @@ const abortButton = document.querySelector<HTMLButtonElement>("#abort")!;
 let state: DesktopState | undefined;
 let models: DesktopModel[] = [];
 let sessions: DesktopSessionInfo[] = [];
+let switchingSessionPath: string | undefined;
+let renderedSessionId: string | undefined;
+let visibleMessageLimit = 120;
+const messagePageSize = 120;
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 const themeStorageKey = "pi-desktop-theme";
 const layoutStorageKey = "pi-desktop-layout";
@@ -501,6 +505,10 @@ function createToolGroup(call: DesktopToolCall, result: DesktopMessage | undefin
 
 function renderMessages(messages: DesktopMessage[]): void {
 	messagesEl.innerHTML = "";
+	if (renderedSessionId !== state?.sessionId) {
+		renderedSessionId = state?.sessionId;
+		visibleMessageLimit = messagePageSize;
+	}
 	if (messages.length === 0) {
 		const empty = document.createElement("div");
 		empty.className = "empty";
@@ -512,7 +520,20 @@ function renderMessages(messages: DesktopMessage[]): void {
 		return;
 	}
 
-	for (let index = 0; index < messages.length; index++) {
+	const firstVisibleIndex = Math.max(0, messages.length - visibleMessageLimit);
+	if (firstVisibleIndex > 0) {
+		const older = document.createElement("button");
+		older.type = "button";
+		older.className = "load-older";
+		older.textContent = `Show ${Math.min(messagePageSize, firstVisibleIndex)} earlier messages`;
+		older.addEventListener("click", () => {
+			visibleMessageLimit += messagePageSize;
+			renderMessages(messages);
+		});
+		messagesEl.append(older);
+	}
+
+	for (let index = firstVisibleIndex; index < messages.length; index++) {
 		const message = messages[index]!;
 		if (message.role === "toolResult") continue;
 		const row = createMessage(message);
@@ -622,16 +643,22 @@ function renderSessionList(): void {
 		for (const session of projectSessions) {
 			const button = document.createElement("button");
 			button.type = "button";
-			button.className = `session-item ${session.id === state?.sessionId ? "active" : ""}`;
+			button.disabled = Boolean(switchingSessionPath);
+			button.className = `session-item ${session.id === state?.sessionId ? "active" : ""} ${
+				session.path === switchingSessionPath ? "loading" : ""
+			}`;
 			const title = session.name || session.firstMessage || "Untitled session";
 			button.innerHTML = `
 			<span class="session-item-title">${title}</span>
-			<span class="session-item-meta">${session.messageCount} messages · ${formatRelative(session.modified)}</span>
+			<span class="session-item-meta">${
+				session.path === switchingSessionPath
+					? "Loading..."
+					: `${session.messageCount} messages · ${formatRelative(session.modified)}`
+			}</span>
 		`;
 			button.addEventListener("click", async () => {
 				try {
-					renderState(await window.piDesktop.switchSession(session.path));
-					await refreshAfterSessionChange();
+					await switchToSession(session.path);
 				} catch (error) {
 					showError(error);
 				}
@@ -685,6 +712,24 @@ async function refreshGit(): Promise<void> {
 async function refreshAfterSessionChange(): Promise<void> {
 	await Promise.all([refreshModels(), refreshSessions(), refreshGit()]);
 	renderMessages(await window.piDesktop.getMessages());
+}
+
+async function switchToSession(sessionPath: string): Promise<void> {
+	if (switchingSessionPath || sessionPath === state?.sessionFile) return;
+	switchingSessionPath = sessionPath;
+	messagesEl.classList.add("loading-session");
+	renderSessionList();
+	try {
+		renderState(await window.piDesktop.switchSession(sessionPath));
+		renderMessages(await window.piDesktop.getMessages());
+		messagesEl.classList.remove("loading-session");
+		refreshModels().catch(showError);
+		Promise.all([refreshSessions(), refreshGit()]).catch(showError);
+	} finally {
+		switchingSessionPath = undefined;
+		renderSessionList();
+		messagesEl.classList.remove("loading-session");
+	}
 }
 
 function showError(error: unknown): void {
