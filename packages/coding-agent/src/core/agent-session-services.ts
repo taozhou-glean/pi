@@ -5,6 +5,7 @@ import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import { connectGleanMcp } from "./glean-mcp.ts";
 import { createGleanProviderConfig, GLEAN_PROVIDER_ID } from "./glean-provider.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import {
@@ -81,6 +82,10 @@ export interface AgentSessionServices {
 	modelRegistry: ModelRegistry;
 	resourceLoader: ResourceLoader;
 	diagnostics: AgentSessionRuntimeDiagnostic[];
+	/** Glean MCP tools discovered at startup (empty if not authenticated or connection failed). */
+	mcpTools: ToolDefinition[];
+	/** Disconnect the MCP client. Call on shutdown. */
+	mcpDisconnect: (() => Promise<void>) | undefined;
 }
 
 function applyExtensionFlagValues(
@@ -171,6 +176,18 @@ export async function createAgentSessionServices(
 	extensionsResult.runtime.pendingProviderRegistrations = [];
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 
+	// Connect to Glean MCP if authenticated
+	let mcpTools: ToolDefinition[] = [];
+	let mcpDisconnect: (() => Promise<void>) | undefined;
+	const gleanAccessToken = await authStorage.getApiKey(GLEAN_PROVIDER_ID);
+	if (gleanAccessToken) {
+		const mcpResult = await connectGleanMcp({ accessToken: gleanAccessToken });
+		if (mcpResult) {
+			mcpTools = mcpResult.tools;
+			mcpDisconnect = mcpResult.disconnect;
+		}
+	}
+
 	return {
 		cwd,
 		agentDir,
@@ -179,6 +196,8 @@ export async function createAgentSessionServices(
 		modelRegistry,
 		resourceLoader,
 		diagnostics,
+		mcpTools,
+		mcpDisconnect,
 	};
 }
 
@@ -192,6 +211,9 @@ export async function createAgentSessionServices(
 export async function createAgentSessionFromServices(
 	options: CreateAgentSessionFromServicesOptions,
 ): Promise<CreateAgentSessionResult> {
+	// Merge Glean MCP tools with any explicitly provided custom tools
+	const allCustomTools = [...(options.customTools ?? []), ...options.services.mcpTools];
+
 	return createAgentSession({
 		cwd: options.services.cwd,
 		agentDir: options.services.agentDir,
@@ -206,7 +228,7 @@ export async function createAgentSessionFromServices(
 		tools: options.tools,
 		excludeTools: options.excludeTools,
 		noTools: options.noTools,
-		customTools: options.customTools,
+		customTools: allCustomTools.length > 0 ? allCustomTools : undefined,
 		sessionStartEvent: options.sessionStartEvent,
 	});
 }

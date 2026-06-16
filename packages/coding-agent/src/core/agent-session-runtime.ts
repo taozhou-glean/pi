@@ -172,6 +172,7 @@ export class AgentSessionRuntime {
 		});
 		this.beforeSessionInvalidate?.();
 		this.session.dispose();
+		await this._services.mcpDisconnect?.();
 	}
 
 	private apply(result: CreateAgentSessionRuntimeResult): void {
@@ -394,6 +395,7 @@ export class AgentSessionRuntime {
 		});
 		this.beforeSessionInvalidate?.();
 		this.session.dispose();
+		await this._services.mcpDisconnect?.();
 	}
 }
 
