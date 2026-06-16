@@ -24,6 +24,7 @@ import { convertResponsesMessages, convertResponsesTools, processResponsesStream
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
+const GLEAN_PROVIDER = "glean";
 
 /**
  * Resolve cache retention preference.
@@ -230,13 +231,17 @@ function createClient(
 }
 
 function buildParams(model: Model<"openai-responses">, context: Context, options?: OpenAIResponsesOptions) {
-	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS);
+	const messages =
+		model.provider === GLEAN_PROVIDER
+			? flattenContextForGleanResponses(context)
+			: convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS);
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 	const compat = getCompat(model);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
 		input: messages,
+		instructions: model.provider === GLEAN_PROVIDER ? context.systemPrompt : undefined,
 		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
@@ -277,6 +282,48 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	}
 
 	return params;
+}
+
+function flattenContextForGleanResponses(context: Context): string {
+	const parts: string[] = [];
+
+	for (const message of context.messages) {
+		if (message.role === "user") {
+			parts.push(`User: ${flattenUserContent(message.content)}`);
+		} else if (message.role === "assistant") {
+			const text = message.content
+				.map((block) => {
+					if (block.type === "text") return block.text;
+					if (block.type === "thinking") return block.thinking ? `[thinking]\n${block.thinking}` : "";
+					return `[tool call: ${block.name}]\n${JSON.stringify(block.arguments)}`;
+				})
+				.filter(Boolean)
+				.join("\n");
+			if (text) {
+				parts.push(`Assistant: ${text}`);
+			}
+		} else if (message.role === "toolResult") {
+			const text = message.content
+				.map((block) => (block.type === "text" ? block.text : `[image: ${block.mimeType}]`))
+				.join("\n");
+			parts.push(`Tool result (${message.toolName}): ${text || "(empty)"}`);
+		}
+	}
+
+	return parts.join("\n\n");
+}
+
+function flattenUserContent(
+	content: Context["messages"][number] extends infer T
+		? T extends { role: "user"; content: infer C }
+			? C
+			: never
+		: never,
+): string {
+	if (typeof content === "string") {
+		return content;
+	}
+	return content.map((block) => (block.type === "text" ? block.text : `[image: ${block.mimeType}]`)).join("\n");
 }
 
 function getServiceTierCostMultiplier(

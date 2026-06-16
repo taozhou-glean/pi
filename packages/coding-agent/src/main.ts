@@ -49,6 +49,8 @@ import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
+const CLI_PROVIDER_ALLOWLIST = ["glean"];
+
 /**
  * Read all content from piped stdin.
  * Returns undefined if stdin is a TTY (interactive terminal).
@@ -620,6 +622,7 @@ export async function main(args: string[], options?: MainOptions) {
 			agentDir,
 			authStorage,
 			settingsManager: runtimeSettingsManager,
+			providerAllowlist: CLI_PROVIDER_ALLOWLIST,
 			extensionFlagValues: parsed.unknownFlags,
 			resourceLoaderReloadOptions: shouldResolveProjectTrust
 				? {

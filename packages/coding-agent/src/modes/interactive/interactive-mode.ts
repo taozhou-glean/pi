@@ -73,6 +73,7 @@ import type {
 	ProjectTrustContext,
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
+import { GLEAN_DEFAULT_MODEL_ID, GLEAN_PROVIDER_ID } from "../../core/glean-provider.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
@@ -226,7 +227,18 @@ function hasDefaultModelProvider(providerId: string): providerId is keyof typeof
 	return providerId in defaultModelPerProvider;
 }
 
+function getDefaultModelForProvider(providerId: string): string | undefined {
+	if (providerId === GLEAN_PROVIDER_ID) {
+		return GLEAN_DEFAULT_MODEL_ID;
+	}
+	if (hasDefaultModelProvider(providerId)) {
+		return defaultModelPerProvider[providerId];
+	}
+	return undefined;
+}
+
 const BEDROCK_PROVIDER_ID = "amazon-bedrock";
+const CLI_LOGIN_PROVIDER_ALLOWLIST = new Set([GLEAN_PROVIDER_ID]);
 
 const BUILT_IN_MODEL_PROVIDERS = new Set<string>(getProviders());
 
@@ -4698,33 +4710,17 @@ export class InteractiveMode {
 		return options.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
-	private showLoginAuthTypeSelector(): void {
-		const subscriptionLabel = "Use a subscription";
-		const apiKeyLabel = "Use an API key";
-		this.showSelector((done) => {
-			const selector = new ExtensionSelectorComponent(
-				"Select authentication method:",
-				[subscriptionLabel, apiKeyLabel],
-				(option) => {
-					done();
-					const authType = option === subscriptionLabel ? "oauth" : "api_key";
-					this.showLoginProviderSelector(authType);
-				},
-				() => {
-					done();
-					this.ui.requestRender();
-				},
-			);
-			return { component: selector, focus: selector };
-		});
-	}
-
-	private showLoginProviderSelector(authType: "oauth" | "api_key"): void {
-		const providerOptions = this.getLoginProviderOptions(authType);
+	private showLoginSelector(): void {
+		const providerOptions = this.getLoginProviderOptions().filter((provider) =>
+			CLI_LOGIN_PROVIDER_ALLOWLIST.has(provider.id),
+		);
 		if (providerOptions.length === 0) {
-			this.showStatus(
-				authType === "oauth" ? "No subscription providers available." : "No API key providers available.",
-			);
+			this.showStatus("No Glean login method is available.");
+			return;
+		}
+
+		if (providerOptions.length === 1) {
+			void this.handleLoginProviderSelection(providerOptions[0]);
 			return;
 		}
 
@@ -4741,17 +4737,11 @@ export class InteractiveMode {
 						return;
 					}
 
-					if (providerOption.authType === "oauth") {
-						await this.showLoginDialog(providerOption.id, providerOption.name);
-					} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
-						this.showBedrockSetupDialog(providerOption.id, providerOption.name);
-					} else {
-						await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
-					}
+					await this.handleLoginProviderSelection(providerOption);
 				},
 				() => {
 					done();
-					this.showLoginAuthTypeSelector();
+					this.ui.requestRender();
 				},
 				(providerId) => this.session.modelRegistry.getProviderAuthStatus(providerId),
 			);
@@ -4759,9 +4749,19 @@ export class InteractiveMode {
 		});
 	}
 
+	private async handleLoginProviderSelection(providerOption: AuthSelectorProvider): Promise<void> {
+		if (providerOption.authType === "oauth") {
+			await this.showLoginDialog(providerOption.id, providerOption.name);
+		} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
+			this.showBedrockSetupDialog(providerOption.id, providerOption.name);
+		} else {
+			await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
+		}
+	}
+
 	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {
 		if (mode === "login") {
-			this.showLoginAuthTypeSelector();
+			this.showLoginSelector();
 			return;
 		}
 
@@ -4823,12 +4823,12 @@ export class InteractiveMode {
 		if (isUnknownModel(previousModel)) {
 			const availableModels = this.session.modelRegistry.getAvailable();
 			const providerModels = availableModels.filter((model) => model.provider === providerId);
-			if (!hasDefaultModelProvider(providerId)) {
+			const defaultModelId = getDefaultModelForProvider(providerId);
+			if (!defaultModelId) {
 				selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
 			} else if (providerModels.length === 0) {
 				selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;
 			} else {
-				const defaultModelId = defaultModelPerProvider[providerId];
 				selectedModel = providerModels.find((model) => model.id === defaultModelId);
 				if (!selectedModel) {
 					selectionError = `${actionLabel}, but its default model "${defaultModelId}" is not available. Use /model to select a model.`;

@@ -91,6 +91,66 @@ describe("openai-responses provider defaults", () => {
 		});
 	});
 
+	it("uses string input for Glean Responses compatibility", async () => {
+		const model: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.5"),
+			provider: "glean",
+			baseUrl: "https://example.glean.com/api/v1/openai/v1",
+		};
+		let capturedPayload: any;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			model,
+			{
+				systemPrompt: "sys",
+				messages: [
+					{ role: "user", content: "hi", timestamp: Date.now() },
+					{
+						role: "assistant",
+						api: "openai-responses",
+						provider: "glean",
+						model: "gpt-5.5",
+						content: [{ type: "text", text: "hello" }],
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "stop",
+						timestamp: Date.now(),
+					},
+					{ role: "user", content: [{ type: "text", text: "again" }], timestamp: Date.now() },
+				],
+			},
+			{
+				apiKey: "test-key",
+				onPayload: (payload) => {
+					capturedPayload = payload;
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload.instructions).toBe("sys");
+		expect(typeof capturedPayload.input).toBe("string");
+		expect(capturedPayload.input).toContain("User: hi");
+		expect(capturedPayload.input).toContain("Assistant: hello");
+		expect(capturedPayload.input).toContain("User: again");
+	});
+
 	it.each(["gpt-5.1", "gpt-5.2", "gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5"] as const)(
 		"sends none reasoning effort for OpenAI %s when no reasoning is requested",
 		async (modelId) => {

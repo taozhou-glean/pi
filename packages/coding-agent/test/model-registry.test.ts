@@ -89,6 +89,39 @@ describe("ModelRegistry", () => {
 		messages: [],
 	};
 
+	describe("provider allowlist", () => {
+		test("only exposes allowlisted custom providers", () => {
+			writeModelsJson({
+				glean: providerConfig("https://glean.example.com/v1", [{ id: "glean-model" }], "openai-completions"),
+				other: providerConfig("https://other.example.com/v1", [{ id: "other-model" }], "openai-completions"),
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath, ["glean"]);
+
+			expect(registry.getAll().map((model) => model.provider)).toEqual(["glean"]);
+			expect(registry.find("glean", "glean-model")).toBeDefined();
+			expect(registry.find("other", "other-model")).toBeUndefined();
+			expect(registry.getProviderAuthStatus("glean").configured).toBe(true);
+			expect(registry.getProviderAuthStatus("other").configured).toBe(false);
+		});
+
+		test("ignores dynamic providers outside the allowlist", () => {
+			const registry = ModelRegistry.inMemory(authStorage, ["glean"]);
+
+			registry.registerProvider(
+				"openai",
+				providerConfig("https://openai.example.com/v1", [{ id: "openai-model" }], "openai-completions"),
+			);
+			registry.registerProvider(
+				"glean",
+				providerConfig("https://glean.example.com/v1", [{ id: "glean-model" }], "openai-completions"),
+			);
+
+			expect(registry.find("openai", "openai-model")).toBeUndefined();
+			expect(registry.find("glean", "glean-model")).toBeDefined();
+		});
+	});
+
 	describe("baseUrl override (no custom models)", () => {
 		test("overriding baseUrl keeps all built-in models", () => {
 			writeRawModelsJson({

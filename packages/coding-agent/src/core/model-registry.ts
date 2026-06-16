@@ -339,19 +339,28 @@ export class ModelRegistry {
 	private loadError: string | undefined = undefined;
 	readonly authStorage: AuthStorage;
 	private modelsJsonPath: string | undefined;
+	private providerAllowlist: Set<string> | undefined;
 
-	private constructor(authStorage: AuthStorage, modelsJsonPath: string | undefined) {
+	private constructor(authStorage: AuthStorage, modelsJsonPath: string | undefined, providerAllowlist?: string[]) {
 		this.authStorage = authStorage;
 		this.modelsJsonPath = modelsJsonPath ? normalizePath(modelsJsonPath) : undefined;
+		this.providerAllowlist =
+			providerAllowlist && providerAllowlist.length > 0
+				? new Set(providerAllowlist.map((provider) => provider.toLowerCase()))
+				: undefined;
 		this.loadModels();
 	}
 
-	static create(authStorage: AuthStorage, modelsJsonPath: string = join(getAgentDir(), "models.json")): ModelRegistry {
-		return new ModelRegistry(authStorage, modelsJsonPath);
+	static create(
+		authStorage: AuthStorage,
+		modelsJsonPath: string = join(getAgentDir(), "models.json"),
+		providerAllowlist?: string[],
+	): ModelRegistry {
+		return new ModelRegistry(authStorage, modelsJsonPath, providerAllowlist);
 	}
 
-	static inMemory(authStorage: AuthStorage): ModelRegistry {
-		return new ModelRegistry(authStorage, undefined);
+	static inMemory(authStorage: AuthStorage, providerAllowlist?: string[]): ModelRegistry {
+		return new ModelRegistry(authStorage, undefined, providerAllowlist);
 	}
 
 	/**
@@ -371,6 +380,8 @@ export class ModelRegistry {
 		for (const [providerName, config] of this.registeredProviders.entries()) {
 			this.applyProviderConfig(providerName, config);
 		}
+
+		this.applyProviderAllowlist();
 	}
 
 	/**
@@ -406,6 +417,30 @@ export class ModelRegistry {
 		}
 
 		this.models = combined;
+		this.applyProviderAllowlist();
+	}
+
+	private isProviderAllowed(providerName: string): boolean {
+		return !this.providerAllowlist || this.providerAllowlist.has(providerName.toLowerCase());
+	}
+
+	private applyProviderAllowlist(): void {
+		if (!this.providerAllowlist) {
+			return;
+		}
+
+		this.models = this.models.filter((model) => this.isProviderAllowed(model.provider));
+		for (const providerName of this.providerRequestConfigs.keys()) {
+			if (!this.isProviderAllowed(providerName)) {
+				this.providerRequestConfigs.delete(providerName);
+			}
+		}
+		for (const key of this.modelRequestHeaders.keys()) {
+			const [providerName] = key.split(":", 1);
+			if (providerName && !this.isProviderAllowed(providerName)) {
+				this.modelRequestHeaders.delete(key);
+			}
+		}
 	}
 
 	/** Load built-in models and apply provider/model overrides */
@@ -810,6 +845,9 @@ export class ModelRegistry {
 	 * If provider has oauth: registers OAuth provider for /login support.
 	 */
 	registerProvider(providerName: string, config: ProviderConfigInput): void {
+		if (!this.isProviderAllowed(providerName)) {
+			return;
+		}
 		this.validateProviderConfig(providerName, config);
 		this.applyProviderConfig(providerName, config);
 		this.upsertRegisteredProvider(providerName, config);
@@ -874,6 +912,10 @@ export class ModelRegistry {
 	}
 
 	private applyProviderConfig(providerName: string, config: ProviderConfigInput): void {
+		if (!this.isProviderAllowed(providerName)) {
+			return;
+		}
+
 		// Register OAuth provider if provided
 		if (config.oauth) {
 			// Ensure the OAuth provider ID matches the provider name
