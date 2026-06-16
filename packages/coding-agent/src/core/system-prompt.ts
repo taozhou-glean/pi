@@ -114,6 +114,26 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		addGuideline("Use bash for file operations like ls, rg, find");
 	}
 
+	// Glean MCP tool guidelines
+	const hasGleanTools = tools.some((name) => name.startsWith("glean_"));
+	if (hasGleanTools) {
+		addGuideline("Prefer local tools (read, bash, grep) for code in the current working directory");
+		addGuideline("Use Glean tools for company knowledge, people, documents, and communication history");
+		addGuideline(
+			"For code questions: use local tools first, fall back to glean_code_search for code outside this repo",
+		);
+		addGuideline("Do not use Glean tools for general programming knowledge or public documentation");
+		addGuideline(
+			"Use glean_memory to save important context: decisions made, project conventions discovered, user preferences observed, and recurring patterns",
+		);
+		addGuideline(
+			"Read from glean_memory at the start of complex tasks to recall relevant past context and user preferences",
+		);
+		addGuideline(
+			"When the user shares preferences, style choices, or project-specific knowledge, proactively save it to memory for future sessions",
+		);
+	}
+
 	for (const guideline of promptGuidelines ?? []) {
 		const normalized = guideline.trim();
 		if (normalized.length > 0) {
