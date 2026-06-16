@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Pi Desktop</title>
+		<script>
+			(() => {
+				const saved = localStorage.getItem("pi-desktop-theme") || "system";
+				const dark = saved === "dark" || (saved === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+				document.body?.setAttribute("data-theme", dark ? "dark" : "light");
+				document.documentElement.dataset.themePreference = saved;
+			})();
+		</script>
+		<link rel="stylesheet" href="./styles.css" />
+	</head>
+	<body data-theme="light">
+		<div id="app">
+			<aside class="sidebar">
+				<div class="brand">
+					<div class="mark">π</div>
+					<div>
+						<div class="title">Pi Desktop</div>
+						<div class="subtitle">Native coding agent for local work</div>
+					</div>
+				</div>
+
+				<section class="panel">
+					<div class="panel-heading">Workspace</div>
+					<label class="field">
+						<span>Path</span>
+						<input id="cwd-input" spellcheck="false" />
+					</label>
+					<div class="button-row">
+						<button id="change-cwd">Open</button>
+						<button id="new-session" class="secondary">New</button>
+					</div>
+				</section>
+
+				<section class="panel">
+					<div class="panel-heading">Model</div>
+					<select id="model-select"></select>
+					<div id="model-meta" class="meta"></div>
+				</section>
+
+				<section class="panel">
+					<div class="panel-heading">Appearance</div>
+					<select id="theme-select">
+						<option value="system">System</option>
+						<option value="light">Light</option>
+						<option value="dark">Dark</option>
+					</select>
+				</section>
+
+				<section class="panel session-panel">
+					<div class="panel-heading row-heading">
+						<span>Sessions</span>
+						<button id="refresh-sessions" class="icon-button" title="Refresh sessions">↻</button>
+					</div>
+					<div id="session-list" class="session-list"></div>
+				</section>
+			</aside>
+
+			<main class="main">
+				<header class="topbar">
+					<button id="toggle-left-panel" class="chrome-button" title="Toggle left sidebar">☰</button>
+					<div class="topbar-title">
+						<div id="session-title" class="session-title">Pi agent session</div>
+						<div id="session-meta" class="meta"></div>
+					</div>
+					<div id="run-state" class="run-state idle">Idle</div>
+					<div class="actions">
+						<button id="refresh-git" class="secondary">Refresh Git</button>
+						<button id="abort" class="secondary">Abort</button>
+						<button id="toggle-right-panel" class="chrome-button" title="Toggle right inspector">▣</button>
+					</div>
+				</header>
+
+				<section class="status-strip">
+					<div class="metric">
+						<span>Workspace</span>
+						<strong id="workspace-name">-</strong>
+					</div>
+					<div class="metric">
+						<span>Session</span>
+						<strong id="session-short-id">-</strong>
+					</div>
+					<div class="metric">
+						<span>Messages</span>
+						<strong id="message-count">0</strong>
+					</div>
+					<div class="metric">
+						<span>Queue</span>
+						<strong id="queue-count">0</strong>
+					</div>
+				</section>
+
+				<section id="messages" class="messages"></section>
+
+				<form id="composer" class="composer">
+					<div class="composer-shell">
+						<textarea id="prompt" rows="3" placeholder="Ask Pi to inspect, edit, test, or explain this workspace"></textarea>
+						<div class="composer-footer">
+							<span id="composer-hint">⌘ Enter to send</span>
+							<button id="send" type="submit">Send</button>
+						</div>
+					</div>
+				</form>
+			</main>
+
+			<div id="left-resizer" class="resizer left-resizer" role="separator" aria-label="Resize sidebar" tabindex="0"></div>
+			<div id="right-resizer" class="resizer right-resizer" role="separator" aria-label="Resize inspector" tabindex="0"></div>
+
+			<aside class="inspector">
+				<section class="panel git-panel">
+					<div class="panel-heading">Git</div>
+					<div id="git-branch" class="meta"></div>
+					<div id="git-status" class="git-status"></div>
+				</section>
+
+				<section class="panel">
+					<div class="panel-heading">Run Context</div>
+					<div id="context-summary" class="context-summary"></div>
+				</section>
+			</aside>
+		</div>
+		<script type="module" src="./renderer.js"></script>
+	</body>
+</html>

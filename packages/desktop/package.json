@@ -1,0 +1,21 @@
+{
+	"name": "@earendil-works/pi-desktop",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Native desktop shell for the Pi coding agent",
+	"type": "module",
+	"main": "dist/main.js",
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "node scripts/build.mjs",
+		"dev": "node scripts/build.mjs --watch",
+		"smoke": "npm run build && PI_DESKTOP_SMOKE=1 electron .",
+		"start": "npm run build && electron ."
+	},
+	"dependencies": {
+		"@earendil-works/pi-coding-agent": "^0.79.5"
+	},
+	"devDependencies": {
+		"electron": "39.8.10"
+	}
+}
