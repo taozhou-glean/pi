@@ -313,6 +313,16 @@ function syncComposerModelSelection(): void {
 	}
 }
 
+function filterModelMenu(query: string): void {
+	const normalized = query.trim().toLowerCase();
+	for (const item of Array.from(
+		composerModelMenu.querySelectorAll<HTMLButtonElement>(".model-menu-item[data-value]"),
+	)) {
+		const haystack = `${item.dataset.modelId ?? ""} ${item.dataset.provider ?? ""}`.toLowerCase();
+		item.hidden = normalized.length > 0 && !haystack.includes(normalized);
+	}
+}
+
 function createMenuLabel(text: string): HTMLDivElement {
 	const label = document.createElement("div");
 	label.className = "composer-menu-label";
@@ -775,6 +785,14 @@ function renderModels(): void {
 		composerModelMenu.append(item);
 	}
 	composerModelMenu.append(createMenuSeparator(), createMenuLabel("Model"));
+	const filterWrap = document.createElement("label");
+	filterWrap.className = "model-filter";
+	filterWrap.innerHTML = `<span>Filter models</span><input type="search" placeholder="Search models" autocomplete="off" spellcheck="false" />`;
+	const filterInput = filterWrap.querySelector<HTMLInputElement>("input")!;
+	filterInput.addEventListener("input", () => {
+		filterModelMenu(filterInput.value);
+	});
+	composerModelMenu.append(filterWrap);
 	for (const model of models) {
 		const option = document.createElement("option");
 		option.value = `${model.provider}:${model.id}`;
@@ -785,6 +803,8 @@ function renderModels(): void {
 		item.type = "button";
 		item.className = "model-menu-item";
 		item.dataset.value = option.value;
+		item.dataset.modelId = model.id;
+		item.dataset.provider = model.provider;
 		item.innerHTML = `<span class="model-menu-name">${model.id}</span><small>${model.provider}</small>`;
 		item.addEventListener("click", async () => {
 			try {

@@ -458,21 +458,50 @@ async function createWindow(): Promise<void> {
 					await new Promise((resolve) => setTimeout(resolve, 0));
 					const addMenuOpened = addMenu.hidden === false;
 					const addMenuCommandCount = addMenu.querySelectorAll(".composer-command").length;
-					const addMenuSwitchCount = addMenu.querySelectorAll(".menu-switch").length;
-					const addMenuSeparatorCount = addMenu.querySelectorAll(".composer-menu-separator").length;
-					const addMenuContextActions = Array.from(addMenu.querySelectorAll("[data-context-kind]")).map(
-						(button) => button.getAttribute("data-context-kind"),
-					);
-					const chooseContextAvailable = typeof window.piDesktop.chooseContext === "function";
-					addButton.click();
-					modelButton.click();
-					await new Promise((resolve) => setTimeout(resolve, 0));
-					const modelMenuOpened = modelMenu.hidden === false;
-					const modelMenuItemCount = modelMenu.querySelectorAll(".model-menu-item").length;
-					const modelMenuHasActiveItem = modelMenu.querySelector(".model-menu-item.active") !== null;
-					const modelMenuHasReasoning = modelMenu.textContent.includes("Reasoning");
-					const modelButtonHasCaret = getComputedStyle(modelButton, "::after").content !== "none";
-					modelButton.click();
+						const addMenuSwitchCount = addMenu.querySelectorAll(".menu-switch").length;
+						const addMenuSeparatorCount = addMenu.querySelectorAll(".composer-menu-separator").length;
+						const addMenuContextActions = Array.from(addMenu.querySelectorAll("[data-context-kind]")).map(
+							(button) => button.getAttribute("data-context-kind"),
+						);
+						const addMenuUnsupportedItemsPresent = ["Plan mode", "Pursue goal", "Create", "Plugins"].some((label) =>
+							addMenu.textContent.includes(label),
+						);
+						const chooseContextAvailable = typeof window.piDesktop.chooseContext === "function";
+						addButton.click();
+						modelButton.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const modelMenuOpened = modelMenu.hidden === false;
+						const modelMenuItemCount = modelMenu.querySelectorAll(".model-menu-item").length;
+						const modelOptionCount = modelMenu.querySelectorAll(".model-menu-item[data-value]").length;
+						const modelMenuHasActiveItem = modelMenu.querySelector(".model-menu-item.active") !== null;
+						const modelMenuHasReasoning = modelMenu.textContent.includes("Reasoning");
+						const modelButtonHasCaret = getComputedStyle(modelButton, "::after").content !== "none";
+						const modelFilterInput = modelMenu.querySelector(".model-filter input");
+						if (!modelFilterInput) {
+							throw new Error("Model menu is missing its filter input");
+						}
+						modelFilterInput.value = "claude";
+						modelFilterInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
+						const visibleFilteredModels = Array.from(modelMenu.querySelectorAll(".model-menu-item[data-value]")).filter(
+							(item) => !item.hidden && getComputedStyle(item).display !== "none",
+						);
+						const modelFilterReducedResults = visibleFilteredModels.length < modelOptionCount;
+						const modelFilterMatchesQuery = visibleFilteredModels.every((item) =>
+							item.textContent.toLowerCase().includes("claude"),
+						);
+						const modelFilterHidesNonMatches = Array.from(
+							modelMenu.querySelectorAll(".model-menu-item[data-value][hidden]"),
+						).every((item) => getComputedStyle(item).display === "none");
+						if (addMenuCommandCount !== 2 || addMenuSwitchCount !== 0 || addMenuSeparatorCount !== 0) {
+							throw new Error("Add menu should only show the two supported context actions");
+						}
+						if (addMenuUnsupportedItemsPresent) {
+							throw new Error("Add menu still shows unsupported actions");
+						}
+						if (!modelFilterReducedResults || !modelFilterMatchesQuery || !modelFilterHidesNonMatches) {
+							throw new Error("Model menu filter did not narrow results to matching models");
+						}
+						modelButton.click();
 					const settingsDetails = document.querySelector(".sidebar-settings");
 					const settingsSummary = settingsDetails.querySelector("summary");
 					const beforeSettingsOpen = settingsDetails.open;
@@ -651,17 +680,21 @@ async function createWindow(): Promise<void> {
 										defaultRightCollapsed,
 											settingsToggleChanged: beforeSettingsOpen !== afterSettingsOpen,
 										noStaticSessionMergeIcon: document.querySelector(".session-item-icon") === null,
-											addMenuOpened,
-											addMenuCommandCount,
-											addMenuSwitchCount,
-											addMenuSeparatorCount,
-											addMenuContextActions,
-											chooseContextAvailable,
-											modelMenuOpened,
-											modelMenuItemCount,
-											modelMenuHasActiveItem,
-											modelMenuHasReasoning,
-											modelButtonHasCaret,
+												addMenuOpened,
+												addMenuCommandCount,
+												addMenuSwitchCount,
+												addMenuSeparatorCount,
+												addMenuContextActions,
+												addMenuUnsupportedItemsPresent,
+												chooseContextAvailable,
+												modelMenuOpened,
+												modelMenuItemCount,
+												modelMenuHasActiveItem,
+												modelMenuHasReasoning,
+												modelButtonHasCaret,
+												modelFilterReducedResults,
+												modelFilterMatchesQuery,
+												modelFilterHidesNonMatches,
 										rightToggleChanged: beforeRightToggleCollapsed !== afterRightToggleCollapsed,
 										rightToggleSticky: sameRect(rightToggleCollapsedRect, rightToggleExpandedRect),
 										rightToggleHitTarget: isHitTarget(rightToggle),

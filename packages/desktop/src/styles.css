@@ -1375,10 +1375,10 @@ body[data-theme="dark"] #send {
 	position: absolute;
 	z-index: 50;
 	bottom: calc(100% + 10px);
-	min-width: 260px;
-	padding: 10px;
+	min-width: 240px;
+	padding: 8px;
 	border: 1px solid var(--line-strong);
-	border-radius: 18px;
+	border-radius: 14px;
 	background: color-mix(in srgb, var(--panel) 94%, var(--paper));
 	box-shadow:
 		0 24px 56px var(--shadow),
@@ -1388,37 +1388,42 @@ body[data-theme="dark"] #send {
 
 .add-menu {
 	left: 0;
-	min-width: 318px;
+	min-width: 238px;
 }
 
 .model-menu {
 	right: 0;
-	min-width: 318px;
-	max-height: min(430px, 56vh);
+	min-width: 286px;
+	max-height: min(340px, 46vh);
 	overflow: auto;
 }
 
 .composer-menu button {
 	display: grid;
-	grid-template-columns: 28px minmax(0, 1fr) auto;
-	gap: 12px;
+	grid-template-columns: 24px minmax(0, 1fr) auto;
+	gap: 10px;
 	align-items: center;
 	width: 100%;
-	min-height: 44px;
-	padding: 7px 10px;
+	min-height: 36px;
+	padding: 6px 9px;
 	border: 0;
-	border-radius: 11px;
+	border-radius: 9px;
 	background: transparent;
 	color: var(--ink);
 	text-align: left;
-	font-size: 16px;
+	font-size: 14px;
 	font-weight: 540;
 	box-shadow: none;
 }
 
 .composer-menu .model-menu-item {
 	grid-template-columns: minmax(0, 1fr) auto;
-	gap: 16px;
+	gap: 12px;
+	min-height: 32px;
+}
+
+.composer-menu button[hidden] {
+	display: none;
 }
 
 .composer-menu button:hover:not(:disabled),
@@ -1435,15 +1440,15 @@ body[data-theme="dark"] #send {
 }
 
 .composer-menu-label {
-	padding: 4px 14px 8px;
+	padding: 4px 10px 7px;
 	color: var(--faint);
-	font-size: 14px;
+	font-size: 12px;
 	font-weight: 560;
 }
 
 .composer-menu-separator {
 	height: 1px;
-	margin: 8px 6px;
+	margin: 7px 6px;
 	background: var(--line-strong);
 	opacity: 0.82;
 }
@@ -1451,15 +1456,34 @@ body[data-theme="dark"] #send {
 .menu-icon {
 	display: grid;
 	place-items: center;
-	width: 24px;
-	height: 24px;
+	width: 22px;
+	height: 22px;
 	color: var(--faint);
 }
 
 .menu-icon svg {
-	width: 22px;
-	height: 22px;
+	width: 20px;
+	height: 20px;
 	stroke-width: 1.9;
+}
+
+.model-filter {
+	display: grid;
+	gap: 4px;
+	padding: 0 4px 7px;
+	color: var(--faint);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.model-filter input {
+	height: 28px;
+	padding: 0 8px;
+	border-color: var(--line);
+	border-radius: 8px;
+	background: var(--panel-soft);
+	color: var(--ink);
+	font-size: 12px;
 }
 
 .menu-switch {
@@ -1529,7 +1553,7 @@ body[data-theme="dark"] #send {
 
 .model-menu-item small {
 	color: var(--faint);
-	font-size: 12px;
+	font-size: 11px;
 	font-weight: 560;
 }
 
