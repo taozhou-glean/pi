@@ -62,10 +62,12 @@ SessionManager
 Startup flow:
 
 1. Resolve the working directory from `PI_DESKTOP_CWD` or `process.cwd()`.
-2. Create Pi services with a provider allowlist.
+2. Create Pi services with a provider allowlist and cache those services by cwd for the lifetime of the desktop process.
 3. Resolve the session directory from Pi settings, unless `PI_CODING_AGENT_SESSION_DIR` overrides it.
 4. Continue the most recent session for the workspace, or create/open a session when requested.
 5. Subscribe to `AgentSession` events and push serialized state/messages to the renderer.
+
+When the sidebar lists sessions, the main process also starts non-blocking service warmups for every project cwd represented in the session store. This keeps the first click into another project from doing all resource loading, model discovery, and Glean MCP connection work on the critical path. In-flight service creation is deduplicated, and cached services are disconnected on app quit.
 
 The current provider allowlist is:
 
@@ -94,7 +96,7 @@ Session behavior mirrors CLI storage rather than creating a desktop-only databas
 - `SessionManager.open(path, sessionDir, cwd)` is used when switching to an existing session.
 - `SessionManager.listAll(sessionDir)` powers the sidebar session list.
 
-The sidebar groups sessions by project path and can show sessions created by the CLI, as long as they are in the same session directory and readable by the current user.
+The sidebar renders every project group from the shared session directory, including sessions created by the CLI when they are readable by the current user. Within each project, sessions are sorted by most recent activity and initially paginated to keep the panel dense; use Show more / Show less controls to expand or collapse that project's session list. Projects themselves are not hidden behind pagination.
 
 ## IPC Surface
 
@@ -105,7 +107,7 @@ The renderer only talks to the main process through `window.piDesktop`, which is
 | `init()` | `pi:init` | Ensure the active desktop session exists and return state. |
 | `getState()` | `pi:get-state` | Return current serialized state. |
 | `getMessages()` | `pi:get-messages` | Return current serialized visible messages. |
-| `listSessions()` | `pi:list-sessions` | Return recent sessions across projects. |
+| `listSessions()` | `pi:list-sessions` | Return sessions across all projects in the shared session directory. |
 | `newSession()` | `pi:new-session` | Create a fresh session for the current cwd. |
 | `switchSession(path)` | `pi:switch-session` | Open an existing session JSONL file. |
 | `prompt(message)` | `pi:prompt` | Send a user prompt, or queue it as a follow-up if the agent is streaming. |
@@ -136,7 +138,10 @@ Current layout behavior:
 - Both side panels are collapsible.
 - The left panel auto-collapses below the responsive width threshold and auto-expands again only if it was auto-collapsed.
 - The right panel starts collapsed by default.
+- The sidebar renders all project groups and paginates sessions within each project.
+- Switching sessions does not force a full sidebar refresh; project services are reused or warmed in the background when possible.
 - The main chat pane clips horizontal overflow at the pane boundary; message contents remain unclipped so markdown tables and code blocks can scroll/render correctly.
+- The composer add menu currently exposes only supported context actions. The model menu includes a local filter for narrowing model choices.
 
 ## Markdown Rendering
 
@@ -161,11 +166,11 @@ This is intentionally lightweight for the bootstrap. If markdown support grows m
 The smoke path currently covers:
 
 - session/state initialization
-- session listing
+- all-project session listing with per-project pagination
 - git status
 - left/right panel resizing and collapse controls
 - settings disclosure
-- composer add/model menus
+- composer add/model menus and model filtering
 - context picker availability
 - markdown headings, code, tables, and horizontal rules
 - hidden thinking-only messages
@@ -181,6 +186,7 @@ Keep this smoke test updated when changing layout, markdown rendering, IPC shape
 - Packaging/signing is not implemented here yet; the package is a local development Electron app.
 - The provider allowlist is hard-coded to `glean`.
 - File/context attachment UI exists, but selected files are not yet threaded into the agent prompt as rich context.
+- Plan mode, goal mode, create flows, and plugin management are not exposed in the desktop composer menu yet.
 - The right inspector is basic: git status and run context only.
 - Session tree navigation, fork/clone flows, and full CLI command parity are not implemented.
 - Markdown rendering is partial and local to the renderer.
