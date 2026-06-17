@@ -420,15 +420,28 @@ async function createWindow(): Promise<void> {
 				const state = await window.piDesktop.getState();
 					const sessions = await window.piDesktop.listSessions();
 					const git = await window.piDesktop.gitStatus();
-					const app = document.querySelector("#app");
-					const leftResizer = document.querySelector("#left-resizer");
-						const leftToggle = Array.from(document.querySelectorAll("[data-left-panel-toggle]")).find(
-							(button) => getComputedStyle(button).display !== "none",
-						);
-					const rightToggle = document.querySelector("#toggle-right-panel");
-					const leftToggleLabel = leftToggle.getAttribute("aria-label");
-					const defaultRightCollapsed = app.classList.contains("right-collapsed");
-					const topbarHeight = Math.round(document.querySelector(".topbar").getBoundingClientRect().height);
+						const app = document.querySelector("#app");
+						const leftResizer = document.querySelector("#left-resizer");
+						const leftToggle = document.querySelector("#toggle-left-panel");
+						const newChatButton = document.querySelector("[data-new-session]");
+						const rightToggle = document.querySelector("#toggle-right-panel");
+						const rect = (element) => {
+							const bounds = element.getBoundingClientRect();
+							return {
+								left: Math.round(bounds.left),
+								top: Math.round(bounds.top),
+								right: Math.round(bounds.right),
+								bottom: Math.round(bounds.bottom),
+							};
+						};
+						const sameRect = (a, b) =>
+							Math.abs(a.left - b.left) <= 1 &&
+							Math.abs(a.top - b.top) <= 1 &&
+							Math.abs(a.right - b.right) <= 1 &&
+							Math.abs(a.bottom - b.bottom) <= 1;
+						const leftToggleLabel = leftToggle.getAttribute("aria-label");
+						const defaultRightCollapsed = app.classList.contains("right-collapsed");
+						const topbarHeight = Math.round(document.querySelector(".topbar").getBoundingClientRect().height);
 					const addButton = document.querySelector("#composer-add");
 					const addMenu = document.querySelector("#composer-add-menu");
 					const modelButton = document.querySelector("#composer-model");
@@ -467,20 +480,33 @@ async function createWindow(): Promise<void> {
 				window.dispatchEvent(new PointerEvent("pointermove", { clientX: 360, pointerId: 1, bubbles: true }));
 				window.dispatchEvent(new PointerEvent("pointerup", { clientX: 360, pointerId: 1, bubbles: true }));
 				await new Promise((resolve) => setTimeout(resolve, 0));
-				const afterGrid = getComputedStyle(app).gridTemplateColumns;
-				const beforeToggleCollapsed = app.classList.contains("left-collapsed");
-					leftToggle.click();
-					await new Promise((resolve) => setTimeout(resolve, 0));
-					const afterToggleCollapsed = app.classList.contains("left-collapsed");
-					const collapsedNewChatVisible =
-						getComputedStyle(document.querySelector(".collapsed-new-chat")).display !== "none";
-					leftToggle.click();
-				const beforeRightToggleCollapsed = app.classList.contains("right-collapsed");
-					rightToggle.click();
-					await new Promise((resolve) => setTimeout(resolve, 0));
-					const afterRightToggleCollapsed = app.classList.contains("right-collapsed");
-					const threePanelComposerHintDisplay = getComputedStyle(document.querySelector("#composer-hint")).display;
-					rightToggle.click();
+					const afterGrid = getComputedStyle(app).gridTemplateColumns;
+					const beforeToggleCollapsed = app.classList.contains("left-collapsed");
+						const leftToggleExpandedRect = rect(leftToggle);
+						const newChatExpandedRect = rect(newChatButton);
+						leftToggle.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const afterToggleCollapsed = app.classList.contains("left-collapsed");
+						const leftToggleCollapsedRect = rect(leftToggle);
+						const newChatCollapsedRect = rect(newChatButton);
+						leftToggle.click();
+					const beforeRightToggleCollapsed = app.classList.contains("right-collapsed");
+						const rightToggleCollapsedRect = rect(rightToggle);
+						rightToggle.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const afterRightToggleCollapsed = app.classList.contains("right-collapsed");
+						const rightToggleExpandedRect = rect(rightToggle);
+						if (!sameRect(leftToggleExpandedRect, leftToggleCollapsedRect)) {
+							throw new Error("Left panel toggle moved between expanded and collapsed states");
+						}
+						if (!sameRect(newChatExpandedRect, newChatCollapsedRect)) {
+							throw new Error("New chat button moved between expanded and collapsed left panel states");
+						}
+						if (!sameRect(rightToggleCollapsedRect, rightToggleExpandedRect)) {
+							throw new Error("Right panel toggle moved between collapsed and expanded states");
+						}
+						const threePanelComposerHintDisplay = getComputedStyle(document.querySelector("#composer-hint")).display;
+						rightToggle.click();
 				window.__piDesktopTest.renderMessages([
 					{
 						role: "user",
@@ -587,11 +613,16 @@ async function createWindow(): Promise<void> {
 					gitBranch: git.branch,
 						gitIsRepo: git.isRepo,
 						resizeChanged: beforeGrid !== afterGrid,
-								leftToggleChanged: beforeToggleCollapsed !== afterToggleCollapsed,
-									leftToggleLabel,
-									collapsedNewChatVisible,
-									defaultRightCollapsed,
-										settingsToggleChanged: beforeSettingsOpen !== afterSettingsOpen,
+									leftToggleChanged: beforeToggleCollapsed !== afterToggleCollapsed,
+										leftToggleLabel,
+										leftToggleSticky: sameRect(leftToggleExpandedRect, leftToggleCollapsedRect),
+										newChatSticky: sameRect(newChatExpandedRect, newChatCollapsedRect),
+										leftToggleExpandedRect,
+										leftToggleCollapsedRect,
+										newChatExpandedRect,
+										newChatCollapsedRect,
+										defaultRightCollapsed,
+											settingsToggleChanged: beforeSettingsOpen !== afterSettingsOpen,
 										noStaticSessionMergeIcon: document.querySelector(".session-item-icon") === null,
 											addMenuOpened,
 											addMenuCommandCount,
@@ -604,8 +635,11 @@ async function createWindow(): Promise<void> {
 											modelMenuHasActiveItem,
 											modelMenuHasReasoning,
 											modelButtonHasCaret,
-									rightToggleChanged: beforeRightToggleCollapsed !== afterRightToggleCollapsed,
-							threePanelComposerHintDisplay,
+										rightToggleChanged: beforeRightToggleCollapsed !== afterRightToggleCollapsed,
+										rightToggleSticky: sameRect(rightToggleCollapsedRect, rightToggleExpandedRect),
+										rightToggleCollapsedRect,
+										rightToggleExpandedRect,
+								threePanelComposerHintDisplay,
 								topbarHeight,
 									focusedControlHasRing: focusedControlShadow !== "none",
 									sendButtonIsNeutral: sendButtonBg !== "rgb(87, 213, 195)",

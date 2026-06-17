@@ -39,6 +39,8 @@
 	--right-panel-width: 320px;
 	--left-track: var(--left-panel-width);
 	--right-track: var(--right-panel-width);
+	--topbar-left-controls-width: 86px;
+	--topbar-right-controls-width: 76px;
 	--chat-inset: clamp(24px, 5vw, 72px);
 	--chat-width: 820px;
 	background: var(--paper);
@@ -276,9 +278,13 @@ button:disabled {
 	gap: 10px;
 	height: 56px;
 	margin: 0 -12px;
-	padding: 10px 12px 9px 116px;
+	padding: 10px 12px 9px calc(12px + var(--topbar-left-controls-width));
 	border-bottom: 1px solid color-mix(in srgb, var(--nav-control-border) 64%, transparent);
 	-webkit-app-region: drag;
+}
+
+body[data-platform="mac"] .sidebar-chrome {
+	padding-left: calc(116px + var(--topbar-left-controls-width));
 }
 
 .sidebar-window-drag {
@@ -305,14 +311,6 @@ button:disabled {
 .sidebar-chrome-button:hover:not(:disabled) {
 	background: var(--nav-control-bg);
 	color: var(--nav-text);
-}
-
-#app:not(.left-collapsed) #toggle-left-panel {
-	display: none;
-}
-
-#app:not(.left-collapsed) .collapsed-new-chat {
-	display: none;
 }
 
 .sidebar-settings {
@@ -628,15 +626,37 @@ select:focus {
 	gap: 10px;
 	min-width: 0;
 	min-height: 56px;
-	padding: 9px 12px;
+	padding: 9px calc(var(--topbar-right-controls-width) + 12px) 9px 12px;
 	border-bottom: 1px solid var(--line);
 	background: var(--topbar);
 	backdrop-filter: blur(16px);
 	-webkit-app-region: drag;
 }
 
+#app.left-collapsed .topbar {
+	padding-left: calc(var(--topbar-left-controls-width) + 12px);
+}
+
 body[data-platform="mac"] #app.left-collapsed .topbar {
 	padding-left: 126px;
+}
+
+.topbar-left-controls {
+	position: absolute;
+	top: 0;
+	left: 12px;
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: var(--topbar-left-controls-width);
+	height: 56px;
+	padding: 13px 12px;
+	-webkit-app-region: no-drag;
+}
+
+body[data-platform="mac"] .topbar-left-controls {
+	left: 116px;
 }
 
 .chrome-button {
@@ -680,9 +700,16 @@ body[data-platform="mac"] #app.left-collapsed .topbar {
 }
 
 .actions {
+	position: absolute;
+	top: 0;
+	right: 0;
+	z-index: 30;
 	display: flex;
+	align-items: center;
 	gap: 7px;
-	flex: 0 0 auto;
+	width: var(--topbar-right-controls-width);
+	height: 56px;
+	padding: 13px 12px;
 	-webkit-app-region: no-drag;
 }
 

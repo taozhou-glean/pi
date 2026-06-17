@@ -14,13 +14,12 @@
 		</script>
 		<link rel="stylesheet" href="./styles.css" />
 	</head>
-	<body data-theme="light">
-			<div id="app">
-				<aside class="sidebar">
-					<div class="sidebar-chrome">
+		<body data-theme="light">
+				<div id="app">
+					<div class="topbar-left-controls">
 						<button
-							id="toggle-left-panel-sidebar"
-							class="sidebar-chrome-button"
+							id="toggle-left-panel"
+							class="chrome-button"
 							data-left-panel-toggle
 							title="Toggle left sidebar"
 							aria-label="Toggle left sidebar"
@@ -30,14 +29,17 @@
 								<path d="M9 4v16" />
 							</svg>
 						</button>
-						<div class="sidebar-window-drag" aria-hidden="true"></div>
-						<button class="sidebar-chrome-button" data-new-session title="New chat" aria-label="New chat">
-							<svg viewBox="0 0 24 24">
+						<button class="chrome-button" data-new-session title="New chat" aria-label="New chat">
+							<svg viewBox="0 0 24 24" aria-hidden="true">
 								<path d="M12 20h9" />
 								<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
 							</svg>
 						</button>
 					</div>
+					<aside class="sidebar">
+						<div class="sidebar-chrome">
+							<div class="sidebar-window-drag" aria-hidden="true"></div>
+						</div>
 
 					<section class="panel session-panel">
 					<div class="panel-heading row-heading">
@@ -89,49 +91,13 @@
 				</details>
 			</aside>
 
-			<main class="main">
-				<header class="topbar">
-				<button
-					id="toggle-left-panel"
-					class="chrome-button"
-					data-left-panel-toggle
-					title="Toggle left sidebar"
-					aria-label="Toggle left sidebar"
-				>
-						<svg viewBox="0 0 24 24" aria-hidden="true">
-							<rect x="4" y="4" width="16" height="16" rx="3" />
-							<path d="M9 4v16" />
-							</svg>
-						</button>
-						<button
-							class="chrome-button collapsed-new-chat"
-							data-new-session
-							title="New chat"
-							aria-label="New chat"
-						>
-							<svg viewBox="0 0 24 24" aria-hidden="true">
-								<path d="M12 20h9" />
-								<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-							</svg>
-						</button>
-						<div class="topbar-title">
-						<div id="session-title" class="session-title">Pi agent session</div>
-					</div>
-						<div id="run-state" class="run-state idle">Idle</div>
-						<div class="actions">
-					<button id="abort" class="chrome-button" title="Abort" aria-label="Abort">
-								<svg viewBox="0 0 24 24" aria-hidden="true">
-									<rect x="7" y="7" width="10" height="10" rx="2" />
-							</svg>
-						</button>
-					<button id="toggle-right-panel" class="chrome-button" title="Toggle right inspector" aria-label="Toggle right inspector">
-							<svg viewBox="0 0 24 24" aria-hidden="true">
-								<rect x="4" y="4" width="16" height="16" rx="3" />
-								<path d="M15 4v16" />
-							</svg>
-						</button>
-					</div>
-				</header>
+				<main class="main">
+					<header class="topbar">
+							<div class="topbar-title">
+							<div id="session-title" class="session-title">Pi agent session</div>
+						</div>
+							<div id="run-state" class="run-state idle">Idle</div>
+					</header>
 
 				<section class="status-strip">
 					<div class="metric">
@@ -263,11 +229,25 @@
 							</button>
 						</div>
 					</div>
-				</form>
-			</main>
+					</form>
+				</main>
 
-			<div id="left-resizer" class="resizer left-resizer" role="separator" aria-label="Resize sidebar" tabindex="0"></div>
-			<div id="right-resizer" class="resizer right-resizer" role="separator" aria-label="Resize inspector" tabindex="0"></div>
+				<div class="actions">
+					<button id="abort" class="chrome-button" title="Abort" aria-label="Abort">
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<rect x="7" y="7" width="10" height="10" rx="2" />
+						</svg>
+					</button>
+					<button id="toggle-right-panel" class="chrome-button" title="Toggle right inspector" aria-label="Toggle right inspector">
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<rect x="4" y="4" width="16" height="16" rx="3" />
+							<path d="M15 4v16" />
+						</svg>
+					</button>
+				</div>
+
+				<div id="left-resizer" class="resizer left-resizer" role="separator" aria-label="Resize sidebar" tabindex="0"></div>
+				<div id="right-resizer" class="resizer right-resizer" role="separator" aria-label="Resize inspector" tabindex="0"></div>
 
 				<aside class="inspector">
 					<section class="panel git-panel">
