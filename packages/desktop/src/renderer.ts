@@ -820,10 +820,12 @@ function renderSessionList(): void {
 		group.push(session);
 		groups.set(session.cwd, group);
 	}
-	const orderedGroups = [...groups.entries()].sort(([cwdA, sessionsA], [cwdB, sessionsB]) => {
-		if (cwdA === state?.cwd) return -1;
-		if (cwdB === state?.cwd) return 1;
-		return new Date(sessionsB[0]?.modified ?? 0).getTime() - new Date(sessionsA[0]?.modified ?? 0).getTime();
+	const modifiedTime = (session: DesktopSessionInfo | undefined): number => new Date(session?.modified ?? 0).getTime();
+	for (const projectSessions of groups.values()) {
+		projectSessions.sort((a, b) => modifiedTime(b) - modifiedTime(a));
+	}
+	const orderedGroups = [...groups.entries()].sort(([, sessionsA], [, sessionsB]) => {
+		return modifiedTime(sessionsB[0]) - modifiedTime(sessionsA[0]);
 	});
 
 	for (const [cwd, projectSessions] of orderedGroups) {

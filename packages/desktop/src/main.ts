@@ -340,15 +340,20 @@ async function listDesktopSessions(): Promise<DesktopSessionInfo[]> {
 	const serialized = sessions.slice(0, 40).map(serializeSessionInfo);
 	const session = getSession();
 	if (session.sessionFile && !serialized.some((entry) => entry.path === session.sessionFile)) {
-		serialized.unshift({
-			path: session.sessionFile,
-			id: session.sessionId,
-			name: session.sessionManager.getSessionName(),
-			cwd: currentCwd,
-			modified: new Date().toISOString(),
-			messageCount: session.messages.length,
-			firstMessage: "Current session",
-		});
+		const activeSession = sessions.find((entry) => entry.path === session.sessionFile);
+		serialized.unshift(
+			activeSession
+				? serializeSessionInfo(activeSession)
+				: {
+						path: session.sessionFile,
+						id: session.sessionId,
+						name: session.sessionManager.getSessionName(),
+						cwd: currentCwd,
+						modified: new Date().toISOString(),
+						messageCount: session.messages.length,
+						firstMessage: "Current session",
+					},
+		);
 	}
 	return serialized;
 }
