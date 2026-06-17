@@ -9,6 +9,7 @@ const api = {
 	switchSession: (sessionPath: string) => ipcRenderer.invoke("pi:switch-session", sessionPath),
 	prompt: (message: string) => ipcRenderer.invoke("pi:prompt", message),
 	abort: () => ipcRenderer.invoke("pi:abort"),
+	chooseContext: (kind: "files" | "folder" | "workspace") => ipcRenderer.invoke("pi:choose-context", kind),
 	setCwd: (cwd: string) => ipcRenderer.invoke("pi:set-cwd", cwd),
 	listModels: () => ipcRenderer.invoke("pi:list-models"),
 	setModel: (provider: string, id: string) => ipcRenderer.invoke("pi:set-model", provider, id),

@@ -14,10 +14,13 @@ import {
 	type SessionInfo,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions } from "electron";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const appName = "Pi Desktop";
+
+app.setName(appName);
 
 type DesktopMessage = {
 	role: string;
@@ -105,7 +108,8 @@ function textFromContent(content: unknown): string {
 		.map((part) => {
 			if (!part || typeof part !== "object") return "";
 			const typed = part as { type?: string; text?: string; content?: string; name?: string };
-			if (typed.type === "text" || typed.type === "thinking") return typed.text ?? "";
+			if (typed.type === "text") return typed.text ?? "";
+			if (typed.type === "thinking") return "";
 			if (typed.type === "toolCall") return "";
 			if (typed.type === "image") return "[image]";
 			return typed.text ?? typed.content ?? "";
@@ -388,7 +392,7 @@ async function createWindow(): Promise<void> {
 		minWidth: 900,
 		minHeight: 620,
 		title: "Pi Desktop",
-		backgroundColor: "#111514",
+		backgroundColor: "#111110",
 		titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
 		trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 18 } : undefined,
 		webPreferences: {
@@ -398,6 +402,9 @@ async function createWindow(): Promise<void> {
 		},
 	});
 
+	if (process.env.PI_DESKTOP_SMOKE === "1") {
+		await mainWindow.webContents.session.clearStorageData({ storages: ["localstorage"] });
+	}
 	await mainWindow.loadFile(resolve(__dirname, "index.html"));
 	mainWindow.show();
 	mainWindow.focus();
@@ -406,16 +413,69 @@ async function createWindow(): Promise<void> {
 			(async () => {
 				await new Promise((resolve) => setTimeout(resolve, 250));
 				const state = await window.piDesktop.getState();
-				const sessions = await window.piDesktop.listSessions();
-				const git = await window.piDesktop.gitStatus();
-				const app = document.querySelector("#app");
-				const leftResizer = document.querySelector("#left-resizer");
-				const beforeGrid = getComputedStyle(app).gridTemplateColumns;
+					const sessions = await window.piDesktop.listSessions();
+					const git = await window.piDesktop.gitStatus();
+					const app = document.querySelector("#app");
+					const leftResizer = document.querySelector("#left-resizer");
+						const leftToggle = Array.from(document.querySelectorAll("[data-left-panel-toggle]")).find(
+							(button) => getComputedStyle(button).display !== "none",
+						);
+					const rightToggle = document.querySelector("#toggle-right-panel");
+					const leftToggleLabel = leftToggle.getAttribute("aria-label");
+					const defaultRightCollapsed = app.classList.contains("right-collapsed");
+					const topbarHeight = Math.round(document.querySelector(".topbar").getBoundingClientRect().height);
+					const addButton = document.querySelector("#composer-add");
+					const addMenu = document.querySelector("#composer-add-menu");
+					const modelButton = document.querySelector("#composer-model");
+					const modelMenu = document.querySelector("#composer-model-menu");
+					addButton.click();
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					const addMenuOpened = addMenu.hidden === false;
+					const addMenuCommandCount = addMenu.querySelectorAll(".composer-command").length;
+					const addMenuSwitchCount = addMenu.querySelectorAll(".menu-switch").length;
+					const addMenuSeparatorCount = addMenu.querySelectorAll(".composer-menu-separator").length;
+					const addMenuContextActions = Array.from(addMenu.querySelectorAll("[data-context-kind]")).map(
+						(button) => button.getAttribute("data-context-kind"),
+					);
+					const chooseContextAvailable = typeof window.piDesktop.chooseContext === "function";
+					addButton.click();
+					modelButton.click();
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					const modelMenuOpened = modelMenu.hidden === false;
+					const modelMenuItemCount = modelMenu.querySelectorAll(".model-menu-item").length;
+					const modelMenuHasActiveItem = modelMenu.querySelector(".model-menu-item.active") !== null;
+					const modelMenuHasReasoning = modelMenu.textContent.includes("Reasoning");
+					const modelButtonHasCaret = getComputedStyle(modelButton, "::after").content !== "none";
+					modelButton.click();
+					const settingsDetails = document.querySelector(".sidebar-settings");
+					const settingsSummary = settingsDetails.querySelector("summary");
+					const beforeSettingsOpen = settingsDetails.open;
+					settingsSummary.click();
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					const afterSettingsOpen = settingsDetails.open;
+					settingsSummary.click();
+					leftToggle.focus();
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					const focusedControlShadow = getComputedStyle(leftToggle).boxShadow;
+					const beforeGrid = getComputedStyle(app).gridTemplateColumns;
 				leftResizer.dispatchEvent(new PointerEvent("pointerdown", { clientX: 300, pointerId: 1, bubbles: true }));
 				window.dispatchEvent(new PointerEvent("pointermove", { clientX: 360, pointerId: 1, bubbles: true }));
 				window.dispatchEvent(new PointerEvent("pointerup", { clientX: 360, pointerId: 1, bubbles: true }));
 				await new Promise((resolve) => setTimeout(resolve, 0));
 				const afterGrid = getComputedStyle(app).gridTemplateColumns;
+				const beforeToggleCollapsed = app.classList.contains("left-collapsed");
+					leftToggle.click();
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					const afterToggleCollapsed = app.classList.contains("left-collapsed");
+					const collapsedNewChatVisible =
+						getComputedStyle(document.querySelector(".collapsed-new-chat")).display !== "none";
+					leftToggle.click();
+				const beforeRightToggleCollapsed = app.classList.contains("right-collapsed");
+					rightToggle.click();
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					const afterRightToggleCollapsed = app.classList.contains("right-collapsed");
+					const threePanelComposerHintDisplay = getComputedStyle(document.querySelector("#composer-hint")).display;
+					rightToggle.click();
 				window.__piDesktopTest.renderMessages([
 					{
 						role: "user",
@@ -426,8 +486,18 @@ async function createWindow(): Promise<void> {
 					{
 						role: "assistant",
 						text: "",
+						content: [{ type: "thinking", text: "Hidden reasoning should not render" }],
+						timestamp: Date.now(),
+					},
+					{
+						role: "assistant",
+						text: "",
 						content: [
-							{ type: "text", text: "### Heading\\n\\n- one\\n- two\\n\\n\`\`\`ts\\nconst value = 1;\\n\`\`\`" },
+							{
+								type: "text",
+								text:
+									"### Heading\\n\\n- one\\n- two\\n\\n\`\`\`ts\\nconst value = 1;\\n\`\`\`\\n\\n---\\n\\n| Layer | Runs where | Does what |\\n|-------|------------|-----------|\\n| UI | Renderer process | Text input and markdown rendering |\\n| IPC bridge | preload.ts | Exposes window.piDesktop.* |",
+							},
 							{ type: "toolCall", id: "call_1", name: "read", input: { path: "README.md" } },
 						],
 						toolCalls: [{ type: "toolCall", id: "call_1", name: "read", input: { path: "README.md" } }],
@@ -442,32 +512,115 @@ async function createWindow(): Promise<void> {
 						isError: false,
 						timestamp: Date.now(),
 					},
-					{
-						role: "assistant",
-						text: "Done",
-						content: [{ type: "text", text: "Done" }],
-						timestamp: Date.now(),
-					},
-				]);
+						{
+							role: "assistant",
+							text: "Done",
+							content: [{ type: "text", text: "Done" }],
+							timestamp: Date.now(),
+						},
+						{
+							role: "error",
+							text: "OpenAI API error (400): request failed",
+							content: [{ type: "text", text: "OpenAI API error (400): request failed" }],
+							timestamp: Date.now(),
+						},
+					]);
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					const composerHeight = Math.round(document.querySelector(".composer-shell").getBoundingClientRect().height);
+					const composerShellOverflow = getComputedStyle(document.querySelector(".composer-shell")).overflow;
+					const defaultMessageTimeOpacity = getComputedStyle(document.querySelector(".message-time")).opacity;
+					const mainRect = document.querySelector(".main").getBoundingClientRect();
+					const assistantRect = document.querySelector(".message.assistant").getBoundingClientRect();
+					const composerRect = document.querySelector(".composer-shell").getBoundingClientRect();
+					const mainStyle = getComputedStyle(document.querySelector(".main"));
+					const mainLeft = Math.round(mainRect.left);
+					const mainRight = Math.round(mainRect.right);
+					const assistantLeft = Math.round(assistantRect.left);
+					const assistantRight = Math.round(assistantRect.right);
+					const assistantLeftGap = assistantLeft - mainLeft;
+					const composerLeftGap = Math.round(composerRect.left) - mainLeft;
+					const assistantContainedInMain = assistantRight <= mainRight + 1;
+				const prompt = document.querySelector("#prompt");
+				const defaultPromptHeight = Math.round(prompt.getBoundingClientRect().height);
+				prompt.value = "line one\\nline two\\nline three\\nline four\\nline five";
+				prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
 				await new Promise((resolve) => setTimeout(resolve, 0));
-				return {
-					title: document.querySelector(".title")?.textContent,
-					cwd: state.cwd,
+					const grownPromptHeight = Math.round(prompt.getBoundingClientRect().height);
+						const textareaResize = getComputedStyle(prompt).resize;
+							const errorStyle = getComputedStyle(document.querySelector(".message.error"));
+							const contextRowStyle = getComputedStyle(document.querySelector(".context-summary div"));
+							const sendButtonBg = getComputedStyle(document.querySelector("#send")).backgroundColor;
+							const activeSessionShadow = getComputedStyle(document.querySelector(".session-item.active")).boxShadow;
+							const responsiveBeforeCollapsed = app.classList.contains("left-collapsed");
+							const originalInnerWidth = window.innerWidth;
+							Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
+							window.dispatchEvent(new Event("resize"));
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							const responsiveAutoCollapsed = app.classList.contains("left-collapsed");
+							Object.defineProperty(window, "innerWidth", { value: originalInnerWidth, configurable: true });
+							window.dispatchEvent(new Event("resize"));
+							return {
+						title: document.querySelector("#session-title")?.textContent,
+						documentTitle: document.title,
+						cwd: state.cwd,
 					sessionDir: state.sessionDir,
 					sessionId: state.sessionId,
 					sessionCount: sessions.length,
-					modelText: document.querySelector("#session-meta")?.textContent,
+					modelText: document.querySelector("#composer-model")?.textContent,
+					userMessageText: document.querySelector(".message.user .message-body")?.textContent,
 					markdownHeading: document.querySelector(".message.assistant .markdown h3, .message.assistant .markdown h4, .message.assistant .markdown h5")?.textContent,
 					markdownCode: document.querySelector(".message.assistant .markdown pre code")?.textContent,
+					markdownTableHeader: document.querySelector(".message.assistant .markdown table th")?.textContent,
+					markdownTableCell: document.querySelector(".message.assistant .markdown table tbody tr:nth-child(2) td:nth-child(2)")?.textContent,
+					markdownTableRowCount: document.querySelectorAll(".message.assistant .markdown table tbody tr").length,
+					markdownTableRendered: document.querySelector(".message.assistant .markdown table") !== null,
+					markdownHorizontalRuleRendered: document.querySelector(".message.assistant .markdown hr") !== null,
+					thinkingHidden: document.querySelector("#messages")?.textContent?.includes("Hidden reasoning should not render") === false,
 					toolGroupText: document.querySelector(".tool-group summary")?.textContent,
 					toolGroupCollapsed: document.querySelector(".tool-group")?.open === false,
 					toolResultHiddenAsMessage: document.querySelector(".message.toolResult") === null,
 					gitBranch: git.branch,
-					gitIsRepo: git.isRepo,
-					resizeChanged: beforeGrid !== afterGrid,
-					beforeGrid,
-					afterGrid,
-				};
+						gitIsRepo: git.isRepo,
+						resizeChanged: beforeGrid !== afterGrid,
+								leftToggleChanged: beforeToggleCollapsed !== afterToggleCollapsed,
+									leftToggleLabel,
+									collapsedNewChatVisible,
+									defaultRightCollapsed,
+										settingsToggleChanged: beforeSettingsOpen !== afterSettingsOpen,
+										noStaticSessionMergeIcon: document.querySelector(".session-item-icon") === null,
+											addMenuOpened,
+											addMenuCommandCount,
+											addMenuSwitchCount,
+											addMenuSeparatorCount,
+											addMenuContextActions,
+											chooseContextAvailable,
+											modelMenuOpened,
+											modelMenuItemCount,
+											modelMenuHasActiveItem,
+											modelMenuHasReasoning,
+											modelButtonHasCaret,
+									rightToggleChanged: beforeRightToggleCollapsed !== afterRightToggleCollapsed,
+							threePanelComposerHintDisplay,
+								topbarHeight,
+									focusedControlHasRing: focusedControlShadow !== "none",
+									sendButtonIsNeutral: sendButtonBg !== "rgb(87, 213, 195)",
+										activeSessionHasInsetOnly: activeSessionShadow.includes("inset") && !activeSessionShadow.includes(" 0px 10px "),
+										composerHeight,
+										composerShellAllowsMenus: composerShellOverflow === "visible",
+										assistantLeftGap,
+										composerLeftGap,
+										assistantContainedInMain,
+										mainClipsOverflow: mainStyle.overflow === "hidden" && mainStyle.contain.includes("paint"),
+								promptAutosized: grownPromptHeight > defaultPromptHeight,
+						defaultMessageTimeOpacity,
+						textareaResize,
+						errorHasFrame: errorStyle.borderTopStyle !== "none" && errorStyle.paddingTop !== "0px",
+						contextRowsAreFlat: contextRowStyle.borderLeftStyle === "none" && contextRowStyle.backgroundColor === "rgba(0, 0, 0, 0)",
+						responsiveBeforeCollapsed,
+						responsiveAutoCollapsed,
+						beforeGrid,
+						afterGrid,
+					};
 			})()
 		`);
 		console.log(`PI_DESKTOP_SMOKE_RESULT ${JSON.stringify(result)}`);
@@ -476,6 +629,63 @@ async function createWindow(): Promise<void> {
 	mainWindow.on("closed", () => {
 		mainWindow = undefined;
 	});
+}
+
+function installApplicationMenu(): void {
+	const template: MenuItemConstructorOptions[] = [
+		{
+			label: appName,
+			submenu: [
+				{ role: "about", label: `About ${appName}` },
+				{ type: "separator" },
+				{ role: "services" },
+				{ type: "separator" },
+				{ role: "hide", label: `Hide ${appName}` },
+				{ role: "hideOthers" },
+				{ role: "unhide" },
+				{ type: "separator" },
+				{ role: "quit", label: `Quit ${appName}` },
+			],
+		},
+		{
+			label: "File",
+			submenu: [{ role: "close" }],
+		},
+		{
+			label: "Edit",
+			submenu: [
+				{ role: "undo" },
+				{ role: "redo" },
+				{ type: "separator" },
+				{ role: "cut" },
+				{ role: "copy" },
+				{ role: "paste" },
+				{ role: "selectAll" },
+			],
+		},
+		{
+			label: "View",
+			submenu: [
+				{ role: "reload" },
+				{ role: "toggleDevTools" },
+				{ type: "separator" },
+				{ role: "resetZoom" },
+				{ role: "zoomIn" },
+				{ role: "zoomOut" },
+				{ type: "separator" },
+				{ role: "togglefullscreen" },
+			],
+		},
+		{
+			label: "Window",
+			submenu: [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "front" }],
+		},
+		{
+			label: "Help",
+			submenu: [],
+		},
+	];
+	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 ipcMain.handle("pi:init", async () => ensureDesktopSession());
@@ -503,6 +713,18 @@ ipcMain.handle("pi:abort", async () => {
 	await getSession().abort();
 	return serializeState();
 });
+ipcMain.handle("pi:choose-context", async (_event, kind: "files" | "folder" | "workspace") => {
+	await ensureDesktopSession();
+	if (kind === "workspace") {
+		return [currentCwd];
+	}
+	const result = await dialog.showOpenDialog(mainWindow!, {
+		defaultPath: currentCwd,
+		properties:
+			kind === "folder" ? ["openDirectory", "createDirectory"] : ["openFile", "multiSelections", "showHiddenFiles"],
+	});
+	return result.canceled ? [] : result.filePaths;
+});
 ipcMain.handle("pi:set-cwd", async (_event, cwd: string) => {
 	if (!existsSync(cwd)) throw new Error(`Path does not exist: ${cwd}`);
 	return createDesktopSession({ cwd });
@@ -529,7 +751,7 @@ ipcMain.handle("pi:git-status", async () => {
 });
 
 app.whenReady().then(async () => {
-	app.setName("Pi Desktop");
+	installApplicationMenu();
 	await createDesktopSession();
 	await createWindow();
 	app.focus({ steal: true });

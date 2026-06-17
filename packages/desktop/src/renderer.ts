@@ -69,6 +69,7 @@ type PiDesktopApi = {
 	switchSession(sessionPath: string): Promise<DesktopState>;
 	prompt(message: string): Promise<DesktopState>;
 	abort(): Promise<DesktopState>;
+	chooseContext(kind: "files" | "folder" | "workspace"): Promise<string[]>;
 	setCwd(cwd: string): Promise<DesktopState>;
 	listModels(): Promise<DesktopModel[]>;
 	setModel(provider: string, id: string): Promise<DesktopState>;
@@ -89,9 +90,11 @@ declare global {
 
 const cwdInput = document.querySelector<HTMLInputElement>("#cwd-input")!;
 const changeCwdButton = document.querySelector<HTMLButtonElement>("#change-cwd")!;
-const newSessionButton = document.querySelector<HTMLButtonElement>("#new-session")!;
+const newSessionButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-new-session]"));
 const appEl = document.querySelector<HTMLDivElement>("#app")!;
-const toggleLeftPanelButton = document.querySelector<HTMLButtonElement>("#toggle-left-panel")!;
+const sidebarSettings = document.querySelector<HTMLDetailsElement>(".sidebar-settings")!;
+const sidebarSettingsSummary = sidebarSettings.querySelector<HTMLElement>("summary")!;
+const toggleLeftPanelButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-left-panel-toggle]"));
 const toggleRightPanelButton = document.querySelector<HTMLButtonElement>("#toggle-right-panel")!;
 const leftResizer = document.querySelector<HTMLDivElement>("#left-resizer")!;
 const rightResizer = document.querySelector<HTMLDivElement>("#right-resizer")!;
@@ -104,7 +107,10 @@ const gitBranch = document.querySelector<HTMLDivElement>("#git-branch")!;
 const gitStatus = document.querySelector<HTMLDivElement>("#git-status")!;
 const refreshGitButton = document.querySelector<HTMLButtonElement>("#refresh-git")!;
 const sessionTitle = document.querySelector<HTMLDivElement>("#session-title")!;
-const sessionMeta = document.querySelector<HTMLDivElement>("#session-meta")!;
+const composerAddButton = document.querySelector<HTMLButtonElement>("#composer-add")!;
+const composerAddMenu = document.querySelector<HTMLDivElement>("#composer-add-menu")!;
+const composerModelButton = document.querySelector<HTMLButtonElement>("#composer-model")!;
+const composerModelMenu = document.querySelector<HTMLDivElement>("#composer-model-menu")!;
 const runState = document.querySelector<HTMLDivElement>("#run-state")!;
 const workspaceName = document.querySelector<HTMLElement>("#workspace-name")!;
 const sessionShortId = document.querySelector<HTMLElement>("#session-short-id")!;
@@ -127,10 +133,12 @@ const messagePageSize = 120;
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 const themeStorageKey = "pi-desktop-theme";
 const layoutStorageKey = "pi-desktop-layout";
-const minLeftPanelWidth = 220;
+const minLeftPanelWidth = 340;
 const maxLeftPanelWidth = 520;
 const minRightPanelWidth = 240;
 const maxRightPanelWidth = 560;
+const autoCollapseLeftWidth = 1040;
+const autoExpandLeftWidth = 1140;
 
 type ThemePreference = "system" | "light" | "dark";
 
@@ -142,6 +150,7 @@ type LayoutState = {
 };
 
 const layoutState: LayoutState = loadLayoutState();
+let leftPanelAutoCollapsed = false;
 
 document.body.dataset.platform = navigator.platform.toLowerCase().includes("mac") ? "mac" : "other";
 
@@ -152,6 +161,7 @@ function getThemePreference(): ThemePreference {
 
 function applyTheme(preference: ThemePreference = getThemePreference()): void {
 	const resolved = preference === "system" ? (themeMedia.matches ? "dark" : "light") : preference;
+	document.documentElement.dataset.theme = resolved;
 	document.body.dataset.theme = resolved;
 	themeSelect.value = preference;
 }
@@ -164,13 +174,13 @@ function loadLayoutState(): LayoutState {
 	try {
 		const parsed = JSON.parse(localStorage.getItem(layoutStorageKey) ?? "{}") as Partial<LayoutState>;
 		return {
-			leftWidth: clamp(Number(parsed.leftWidth) || 300, minLeftPanelWidth, maxLeftPanelWidth),
+			leftWidth: clamp(Number(parsed.leftWidth) || 390, minLeftPanelWidth, maxLeftPanelWidth),
 			rightWidth: clamp(Number(parsed.rightWidth) || 320, minRightPanelWidth, maxRightPanelWidth),
 			leftCollapsed: parsed.leftCollapsed === true,
-			rightCollapsed: parsed.rightCollapsed === true,
+			rightCollapsed: parsed.rightCollapsed === undefined ? true : parsed.rightCollapsed === true,
 		};
 	} catch {
-		return { leftWidth: 300, rightWidth: 320, leftCollapsed: false, rightCollapsed: false };
+		return { leftWidth: 390, rightWidth: 320, leftCollapsed: false, rightCollapsed: true };
 	}
 }
 
@@ -185,14 +195,32 @@ function applyLayoutState(): void {
 	appEl.style.setProperty("--right-track", layoutState.rightCollapsed ? "0px" : `${layoutState.rightWidth}px`);
 	appEl.classList.toggle("left-collapsed", layoutState.leftCollapsed);
 	appEl.classList.toggle("right-collapsed", layoutState.rightCollapsed);
-	toggleLeftPanelButton.setAttribute("aria-pressed", String(!layoutState.leftCollapsed));
+	for (const button of toggleLeftPanelButtons) {
+		button.setAttribute("aria-pressed", String(!layoutState.leftCollapsed));
+	}
 	toggleRightPanelButton.setAttribute("aria-pressed", String(!layoutState.rightCollapsed));
+}
+
+function syncResponsiveLayout(): void {
+	const width = window.innerWidth;
+	if (width < autoCollapseLeftWidth && !layoutState.leftCollapsed) {
+		layoutState.leftCollapsed = true;
+		leftPanelAutoCollapsed = true;
+		applyLayoutState();
+		return;
+	}
+	if (width >= autoExpandLeftWidth && leftPanelAutoCollapsed && layoutState.leftCollapsed) {
+		layoutState.leftCollapsed = false;
+		leftPanelAutoCollapsed = false;
+		applyLayoutState();
+	}
 }
 
 function setPanelWidth(side: "left" | "right", width: number): void {
 	if (side === "left") {
 		layoutState.leftWidth = clamp(width, minLeftPanelWidth, maxLeftPanelWidth);
 		layoutState.leftCollapsed = false;
+		leftPanelAutoCollapsed = false;
 	} else {
 		layoutState.rightWidth = clamp(width, minRightPanelWidth, maxRightPanelWidth);
 		layoutState.rightCollapsed = false;
@@ -204,6 +232,7 @@ function setPanelWidth(side: "left" | "right", width: number): void {
 function togglePanel(side: "left" | "right"): void {
 	if (side === "left") {
 		layoutState.leftCollapsed = !layoutState.leftCollapsed;
+		leftPanelAutoCollapsed = false;
 	} else {
 		layoutState.rightCollapsed = !layoutState.rightCollapsed;
 	}
@@ -261,6 +290,43 @@ function shortId(id?: string): string {
 	return id ? id.slice(0, 8) : "-";
 }
 
+function modelDisplay(state: DesktopState): string {
+	if (!state.model) return "No model selected";
+	return `${state.model.id} · ${state.thinkingLevel ?? "off"}`;
+}
+
+function setMenuOpen(button: HTMLButtonElement, menu: HTMLElement, open: boolean): void {
+	menu.hidden = !open;
+	button.setAttribute("aria-expanded", String(open));
+}
+
+function closeComposerMenus(): void {
+	setMenuOpen(composerAddButton, composerAddMenu, false);
+	setMenuOpen(composerModelButton, composerModelMenu, false);
+}
+
+function syncComposerModelSelection(): void {
+	for (const item of Array.from(
+		composerModelMenu.querySelectorAll<HTMLButtonElement>(".model-menu-item[data-value]"),
+	)) {
+		item.classList.toggle("active", item.dataset.value === modelSelect.value);
+	}
+}
+
+function createMenuLabel(text: string): HTMLDivElement {
+	const label = document.createElement("div");
+	label.className = "composer-menu-label";
+	label.textContent = text;
+	return label;
+}
+
+function createMenuSeparator(): HTMLDivElement {
+	const separator = document.createElement("div");
+	separator.className = "composer-menu-separator";
+	separator.setAttribute("role", "separator");
+	return separator;
+}
+
 function formatRelative(value: string): string {
 	const date = new Date(value);
 	const deltaSeconds = Math.max(1, Math.round((Date.now() - date.getTime()) / 1000));
@@ -277,7 +343,7 @@ function formatRelative(value: string): string {
 function setBusy(isBusy: boolean): void {
 	sendButton.disabled = isBusy;
 	abortButton.disabled = !isBusy;
-	sendButton.textContent = isBusy ? "Working" : "Send";
+	sendButton.setAttribute("aria-label", isBusy ? "Working" : "Send");
 	runState.textContent = isBusy ? "Running" : "Idle";
 	runState.className = `run-state ${isBusy ? "running" : "idle"}`;
 }
@@ -288,6 +354,17 @@ function roleLabel(role: string): string {
 	if (role === "user") return "You";
 	if (role === "custom") return "Context";
 	return role;
+}
+
+function formatToolLabel(name: string): string {
+	const normalized = name.replace(/[_-]+/g, " ").trim();
+	if (!normalized) return "Tool";
+	return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function toolStateLabel(result: DesktopMessage | undefined): string {
+	if (!result) return "Running";
+	return result.isError ? "Failed" : "Completed";
 }
 
 function appendInlineMarkdown(parent: HTMLElement, text: string): void {
@@ -331,6 +408,50 @@ function appendParagraph(parent: HTMLElement, lines: string[]): void {
 	parent.append(paragraph);
 }
 
+function parseMarkdownTableRow(line: string): string[] | undefined {
+	const trimmed = line.trim();
+	if (!trimmed.includes("|")) return undefined;
+	const normalized = trimmed.startsWith("|") ? trimmed.slice(1) : trimmed;
+	const cells = (normalized.endsWith("|") ? normalized.slice(0, -1) : normalized).split("|");
+	if (cells.length < 2) return undefined;
+	return cells.map((cell) => cell.trim());
+}
+
+function parseMarkdownTableSeparator(line: string, expectedCells: number): boolean {
+	const cells = parseMarkdownTableRow(line);
+	if (!cells || cells.length !== expectedCells) return false;
+	return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function appendMarkdownTable(parent: HTMLElement, header: string[], rows: string[][]): void {
+	const wrapper = document.createElement("div");
+	wrapper.className = "markdown-table-wrap";
+	const table = document.createElement("table");
+	const thead = document.createElement("thead");
+	const headRow = document.createElement("tr");
+	for (const cell of header) {
+		const th = document.createElement("th");
+		appendInlineMarkdown(th, cell);
+		headRow.append(th);
+	}
+	thead.append(headRow);
+	table.append(thead);
+
+	const tbody = document.createElement("tbody");
+	for (const row of rows) {
+		const tr = document.createElement("tr");
+		for (let index = 0; index < header.length; index++) {
+			const td = document.createElement("td");
+			appendInlineMarkdown(td, row[index] ?? "");
+			tr.append(td);
+		}
+		tbody.append(tr);
+	}
+	table.append(tbody);
+	wrapper.append(table);
+	parent.append(wrapper);
+}
+
 function renderMarkdown(parent: HTMLElement, markdown: string): void {
 	const lines = markdown.replace(/\r\n/g, "\n").split("\n");
 	let paragraph: string[] = [];
@@ -346,7 +467,8 @@ function renderMarkdown(parent: HTMLElement, markdown: string): void {
 		list = undefined;
 	};
 
-	for (const line of lines) {
+	for (let index = 0; index < lines.length; index++) {
+		const line = lines[index]!;
 		const fence = /^```/.test(line);
 		if (code) {
 			if (fence) {
@@ -370,6 +492,12 @@ function renderMarkdown(parent: HTMLElement, markdown: string): void {
 		if (!line.trim()) {
 			flushParagraph();
 			flushList();
+			continue;
+		}
+		if (/^(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line.trim())) {
+			flushParagraph();
+			flushList();
+			parent.append(document.createElement("hr"));
 			continue;
 		}
 		const heading = /^(#{1,3})\s+(.+)$/.exec(line);
@@ -405,6 +533,22 @@ function renderMarkdown(parent: HTMLElement, markdown: string): void {
 			parent.append(blockquote);
 			continue;
 		}
+		const tableHeader = parseMarkdownTableRow(line);
+		const nextLine = lines[index + 1];
+		if (tableHeader && nextLine && parseMarkdownTableSeparator(nextLine, tableHeader.length)) {
+			flushParagraph();
+			flushList();
+			const rows: string[][] = [];
+			index += 2;
+			for (; index < lines.length; index++) {
+				const row = parseMarkdownTableRow(lines[index]!);
+				if (!row) break;
+				rows.push(row);
+			}
+			index--;
+			appendMarkdownTable(parent, tableHeader, rows);
+			continue;
+		}
 		paragraph.push(line.trim());
 	}
 	if (code) {
@@ -419,13 +563,16 @@ function renderMarkdown(parent: HTMLElement, markdown: string): void {
 function contentText(message: DesktopMessage): string {
 	if (message.errorMessage) return message.errorMessage;
 	const parts = message.content
-		.filter(
-			(block): block is Extract<DesktopContent, { type: "text" | "thinking" }> =>
-				block.type === "text" || block.type === "thinking",
-		)
+		.filter((block): block is Extract<DesktopContent, { type: "text" }> => block.type === "text")
 		.map((block) => block.text)
 		.filter(Boolean);
 	return parts.join("\n\n") || message.text || "";
+}
+
+function hasVisibleContent(message: DesktopMessage): boolean {
+	return Boolean(
+		contentText(message) || message.content.some((block) => block.type === "image") || message.toolCalls?.length,
+	);
 }
 
 function renderContent(message: DesktopMessage): HTMLElement {
@@ -461,8 +608,10 @@ function createMessage(message: DesktopMessage): HTMLElement {
 	const header = document.createElement("div");
 	header.className = "message-header";
 	const label = document.createElement("span");
+	label.className = "message-role";
 	label.textContent = roleLabel(message.role);
 	const time = document.createElement("time");
+	time.className = "message-time";
 	time.textContent = message.timestamp
 		? new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 		: "";
@@ -479,10 +628,10 @@ function createToolGroup(call: DesktopToolCall, result: DesktopMessage | undefin
 	const summary = document.createElement("summary");
 	const name = document.createElement("span");
 	name.className = "tool-name";
-	name.textContent = call.name;
+	name.textContent = formatToolLabel(call.name);
 	const stateLabel = document.createElement("span");
 	stateLabel.className = "tool-state";
-	stateLabel.textContent = result ? (result.isError ? "failed" : "completed") : "running";
+	stateLabel.textContent = toolStateLabel(result);
 	summary.append(name, stateLabel);
 	details.append(summary);
 
@@ -514,7 +663,7 @@ function renderMessages(messages: DesktopMessage[]): void {
 		empty.className = "empty";
 		empty.innerHTML = `
 			<div class="empty-title">Start with the repo in front of you.</div>
-			<div class="empty-copy">Ask Pi to inspect files, make a change, run tests, or explain the current branch.</div>
+			<div class="empty-copy">Ask for a change, an explanation, or a check against this workspace.</div>
 		`;
 		messagesEl.append(empty);
 		return;
@@ -536,6 +685,7 @@ function renderMessages(messages: DesktopMessage[]): void {
 	for (let index = firstVisibleIndex; index < messages.length; index++) {
 		const message = messages[index]!;
 		if (message.role === "toolResult") continue;
+		if (!hasVisibleContent(message)) continue;
 		const row = createMessage(message);
 		if (message.toolCalls?.length) {
 			const tools = document.createElement("div");
@@ -560,9 +710,9 @@ window.__piDesktopTest = { renderMessages };
 function renderState(next: DesktopState): void {
 	state = next;
 	cwdInput.value = next.cwd;
-	sessionTitle.textContent = next.sessionName || "Pi agent session";
+	updateSessionTitle();
 	const model = next.model ? `${next.model.provider}/${next.model.id}` : "No model selected";
-	sessionMeta.textContent = `${model} · ${next.thinkingLevel ?? "off"} thinking`;
+	composerModelButton.textContent = modelDisplay(next);
 	modelMeta.textContent = next.model
 		? "Using shared Pi auth and model config"
 		: "Use pi /login or configure ~/.pi/agent";
@@ -582,29 +732,76 @@ function renderState(next: DesktopState): void {
 	if (modelSelect.value !== selectedValue) {
 		modelSelect.value = selectedValue;
 	}
+	syncComposerModelSelection();
 	renderSessionList();
+}
+
+function updateSessionTitle(): void {
+	const activeSession = sessions.find((session) => session.id === state?.sessionId);
+	const title = state?.sessionName || activeSession?.name || activeSession?.firstMessage || "New chat";
+	sessionTitle.textContent = title;
+	document.title = `${title} - Pi Desktop`;
 }
 
 function renderModels(): void {
 	modelSelect.innerHTML = "";
+	composerModelMenu.innerHTML = "";
 	if (models.length === 0) {
 		const option = document.createElement("option");
 		option.value = "";
 		option.textContent = "No configured models";
 		modelSelect.append(option);
 		modelSelect.disabled = true;
+		composerModelButton.textContent = "No model selected";
+		composerModelButton.disabled = true;
 		return;
 	}
 	modelSelect.disabled = false;
+	composerModelButton.disabled = false;
+	composerModelMenu.append(createMenuLabel("Reasoning"));
+	const currentThinking = (state?.thinkingLevel ?? "medium").toLowerCase();
+	for (const [label, value] of [
+		["Low", "low"],
+		["Medium", "medium"],
+		["High", "high"],
+		["Extra High", "extra-high"],
+	]) {
+		const item = document.createElement("button");
+		item.type = "button";
+		item.className = `model-menu-item reasoning-item ${currentThinking === value ? "active" : ""}`;
+		item.setAttribute("aria-disabled", "true");
+		item.tabIndex = -1;
+		item.innerHTML = `<span>${label}</span>`;
+		composerModelMenu.append(item);
+	}
+	composerModelMenu.append(createMenuSeparator(), createMenuLabel("Model"));
 	for (const model of models) {
 		const option = document.createElement("option");
 		option.value = `${model.provider}:${model.id}`;
 		option.textContent = `${model.provider} / ${model.id}`;
 		modelSelect.append(option);
+
+		const item = document.createElement("button");
+		item.type = "button";
+		item.className = "model-menu-item";
+		item.dataset.value = option.value;
+		item.innerHTML = `<span class="model-menu-name">${model.id}</span><small>${model.provider}</small>`;
+		item.addEventListener("click", async () => {
+			try {
+				modelSelect.value = option.value;
+				closeComposerMenus();
+				renderState(await window.piDesktop.setModel(model.provider, model.id));
+				promptInput.focus();
+			} catch (error) {
+				showError(error);
+			}
+		});
+		composerModelMenu.append(item);
 	}
 	if (state?.model) {
 		modelSelect.value = `${state.model.provider}:${state.model.id}`;
 	}
+	syncComposerModelSelection();
 }
 
 function renderSessionList(): void {
@@ -632,29 +829,31 @@ function renderSessionList(): void {
 	for (const [cwd, projectSessions] of orderedGroups) {
 		const heading = document.createElement("div");
 		heading.className = `session-group-heading ${cwd === state?.cwd ? "current" : ""}`;
+		const icon = document.createElement("span");
+		icon.className = "project-icon";
+		icon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5V18a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7.2L9.8 5H5a2 2 0 0 0-2 2.5Z" /></svg>`;
 		const label = document.createElement("span");
-		label.textContent = cwd === state?.cwd ? `${basename(cwd)} · current` : basename(cwd);
-		const count = document.createElement("small");
-		count.textContent = String(projectSessions.length);
-		heading.title = cwd;
-		heading.append(label, count);
+		label.className = "project-name";
+		label.textContent = basename(cwd);
+		heading.title = `${cwd} · ${projectSessions.length} sessions`;
+		heading.append(icon, label);
 		sessionList.append(heading);
 
 		for (const session of projectSessions) {
 			const button = document.createElement("button");
 			button.type = "button";
-			button.disabled = Boolean(switchingSessionPath);
+			button.disabled = session.path === switchingSessionPath;
 			button.className = `session-item ${session.id === state?.sessionId ? "active" : ""} ${
 				session.path === switchingSessionPath ? "loading" : ""
 			}`;
 			const title = session.name || session.firstMessage || "Untitled session";
 			button.innerHTML = `
-			<span class="session-item-title">${title}</span>
-			<span class="session-item-meta">${
-				session.path === switchingSessionPath
-					? "Loading..."
-					: `${session.messageCount} messages · ${formatRelative(session.modified)}`
-			}</span>
+				<span class="session-item-title">${title}</span>
+				<span class="session-item-meta">${
+					session.path === switchingSessionPath
+						? "Loading..."
+						: `${session.messageCount} messages · ${formatRelative(session.modified)}`
+				}</span>
 		`;
 			button.addEventListener("click", async () => {
 				try {
@@ -702,6 +901,7 @@ async function refreshModels(): Promise<void> {
 
 async function refreshSessions(): Promise<void> {
 	sessions = await window.piDesktop.listSessions();
+	updateSessionTitle();
 	renderSessionList();
 }
 
@@ -721,6 +921,8 @@ async function switchToSession(sessionPath: string): Promise<void> {
 	renderSessionList();
 	try {
 		renderState(await window.piDesktop.switchSession(sessionPath));
+		switchingSessionPath = undefined;
+		renderSessionList();
 		renderMessages(await window.piDesktop.getMessages());
 		messagesEl.classList.remove("loading-session");
 		refreshModels().catch(showError);
@@ -749,11 +951,30 @@ function showError(error: unknown): void {
 	messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+function autosizePrompt(): void {
+	promptInput.style.height = "auto";
+	promptInput.style.height = `${Math.min(promptInput.scrollHeight, 220)}px`;
+}
+
+function insertComposerContext(paths: string[]): void {
+	if (paths.length === 0) return;
+	const block = [
+		paths.length === 1 ? "Use this path as context:" : "Use these paths as context:",
+		...paths.map((path) => `- ${path}`),
+	].join("\n");
+	const current = promptInput.value.trimEnd();
+	promptInput.value = current ? `${current}\n\n${block}\n` : `${block}\n`;
+	autosizePrompt();
+	promptInput.focus();
+	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
+}
+
 composer.addEventListener("submit", async (event) => {
 	event.preventDefault();
 	const message = promptInput.value.trim();
 	if (!message) return;
 	promptInput.value = "";
+	autosizePrompt();
 	setBusy(true);
 	try {
 		renderState(await window.piDesktop.prompt(message));
@@ -770,6 +991,8 @@ promptInput.addEventListener("keydown", (event) => {
 	}
 });
 
+promptInput.addEventListener("input", autosizePrompt);
+
 abortButton.addEventListener("click", async () => {
 	try {
 		renderState(await window.piDesktop.abort());
@@ -778,14 +1001,16 @@ abortButton.addEventListener("click", async () => {
 	}
 });
 
-newSessionButton.addEventListener("click", async () => {
-	try {
-		renderState(await window.piDesktop.newSession());
-		await refreshAfterSessionChange();
-	} catch (error) {
-		showError(error);
-	}
-});
+for (const button of newSessionButtons) {
+	button.addEventListener("click", async () => {
+		try {
+			renderState(await window.piDesktop.newSession());
+			await refreshAfterSessionChange();
+		} catch (error) {
+			showError(error);
+		}
+	});
+}
 
 changeCwdButton.addEventListener("click", async () => {
 	try {
@@ -802,6 +1027,7 @@ modelSelect.addEventListener("change", async () => {
 	if (!provider || !id) return;
 	try {
 		renderState(await window.piDesktop.setModel(provider, id));
+		syncComposerModelSelection();
 	} catch (error) {
 		showError(error);
 	}
@@ -819,12 +1045,90 @@ themeMedia.addEventListener("change", () => {
 	}
 });
 
-toggleLeftPanelButton.addEventListener("click", () => {
-	togglePanel("left");
+window.addEventListener("resize", syncResponsiveLayout);
+
+sidebarSettingsSummary.addEventListener("click", (event) => {
+	event.preventDefault();
+	sidebarSettings.open = !sidebarSettings.open;
 });
+
+for (const button of toggleLeftPanelButtons) {
+	button.addEventListener("click", () => {
+		togglePanel("left");
+	});
+}
 
 toggleRightPanelButton.addEventListener("click", () => {
 	togglePanel("right");
+});
+
+function toggleComposerMenu(button: HTMLButtonElement, menu: HTMLElement): void {
+	const nextOpen = menu.hidden;
+	closeComposerMenus();
+	setMenuOpen(button, menu, nextOpen);
+}
+
+composerAddButton.addEventListener("mousedown", (event) => {
+	event.preventDefault();
+	event.stopPropagation();
+	toggleComposerMenu(composerAddButton, composerAddMenu);
+});
+
+composerAddButton.addEventListener("click", (event) => {
+	event.stopPropagation();
+	if (event.detail === 0) {
+		toggleComposerMenu(composerAddButton, composerAddMenu);
+	}
+});
+
+composerModelButton.addEventListener("mousedown", (event) => {
+	event.preventDefault();
+	event.stopPropagation();
+	toggleComposerMenu(composerModelButton, composerModelMenu);
+});
+
+composerModelButton.addEventListener("click", (event) => {
+	event.stopPropagation();
+	if (event.detail === 0) {
+		toggleComposerMenu(composerModelButton, composerModelMenu);
+	}
+});
+
+composerAddMenu.addEventListener("click", async (event) => {
+	event.stopPropagation();
+	const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-context-kind]");
+	if (!button) return;
+	const kind = button.dataset.contextKind as "files" | "folder" | "workspace";
+	try {
+		closeComposerMenus();
+		insertComposerContext(await window.piDesktop.chooseContext(kind));
+	} catch (error) {
+		showError(error);
+	}
+});
+
+composerModelMenu.addEventListener("click", (event) => {
+	event.stopPropagation();
+});
+
+document.addEventListener("click", (event) => {
+	if (
+		event.target instanceof Node &&
+		(composerAddButton.contains(event.target) ||
+			composerAddMenu.contains(event.target) ||
+			composerModelButton.contains(event.target) ||
+			composerModelMenu.contains(event.target))
+	) {
+		return;
+	}
+	closeComposerMenus();
+});
+
+document.addEventListener("keydown", (event) => {
+	if (event.key === "Escape") {
+		closeComposerMenus();
+		promptInput.focus();
+	}
 });
 
 leftResizer.addEventListener("pointerdown", (event) => {
@@ -864,6 +1168,7 @@ window.piDesktop.onEvent((event) => {
 
 async function boot(): Promise<void> {
 	applyLayoutState();
+	syncResponsiveLayout();
 	applyTheme();
 	renderState(await window.piDesktop.init());
 	await refreshAfterSessionChange();
