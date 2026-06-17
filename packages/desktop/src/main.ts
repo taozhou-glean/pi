@@ -439,6 +439,14 @@ async function createWindow(): Promise<void> {
 							Math.abs(a.top - b.top) <= 1 &&
 							Math.abs(a.right - b.right) <= 1 &&
 							Math.abs(a.bottom - b.bottom) <= 1;
+						const isHitTarget = (element) => {
+							const bounds = element.getBoundingClientRect();
+							const target = document.elementFromPoint(
+								Math.round(bounds.left + bounds.width / 2),
+								Math.round(bounds.top + bounds.height / 2),
+							);
+							return target === element || element.contains(target);
+						};
 						const leftToggleLabel = leftToggle.getAttribute("aria-label");
 						const defaultRightCollapsed = app.classList.contains("right-collapsed");
 						const topbarHeight = Math.round(document.querySelector(".topbar").getBoundingClientRect().height);
@@ -489,6 +497,7 @@ async function createWindow(): Promise<void> {
 						const afterToggleCollapsed = app.classList.contains("left-collapsed");
 						const leftToggleCollapsedRect = rect(leftToggle);
 						const newChatCollapsedRect = rect(newChatButton);
+						const titleCollapsedRect = rect(document.querySelector(".topbar-title"));
 						leftToggle.click();
 					const beforeRightToggleCollapsed = app.classList.contains("right-collapsed");
 						const rightToggleCollapsedRect = rect(rightToggle);
@@ -502,8 +511,23 @@ async function createWindow(): Promise<void> {
 						if (!sameRect(newChatExpandedRect, newChatCollapsedRect)) {
 							throw new Error("New chat button moved between expanded and collapsed left panel states");
 						}
+						if (newChatCollapsedRect.right > titleCollapsedRect.left) {
+							throw new Error("Collapsed header title overlaps fixed left controls");
+						}
 						if (!sameRect(rightToggleCollapsedRect, rightToggleExpandedRect)) {
 							throw new Error("Right panel toggle moved between collapsed and expanded states");
+						}
+						if (!isHitTarget(leftToggle)) {
+							throw new Error("Left panel toggle is not the topmost pointer target");
+						}
+						if (!isHitTarget(newChatButton)) {
+							throw new Error("New chat button is not the topmost pointer target");
+						}
+						if (!isHitTarget(rightToggle)) {
+							throw new Error("Right panel toggle is not the topmost pointer target");
+						}
+						if (getComputedStyle(document.querySelector(".topbar")).webkitAppRegion === "drag") {
+							throw new Error("Topbar drag region covers fixed header controls");
 						}
 						const threePanelComposerHintDisplay = getComputedStyle(document.querySelector("#composer-hint")).display;
 						rightToggle.click();
@@ -617,10 +641,13 @@ async function createWindow(): Promise<void> {
 										leftToggleLabel,
 										leftToggleSticky: sameRect(leftToggleExpandedRect, leftToggleCollapsedRect),
 										newChatSticky: sameRect(newChatExpandedRect, newChatCollapsedRect),
+										leftToggleHitTarget: isHitTarget(leftToggle),
+										newChatHitTarget: isHitTarget(newChatButton),
 										leftToggleExpandedRect,
 										leftToggleCollapsedRect,
 										newChatExpandedRect,
 										newChatCollapsedRect,
+										titleCollapsedRect,
 										defaultRightCollapsed,
 											settingsToggleChanged: beforeSettingsOpen !== afterSettingsOpen,
 										noStaticSessionMergeIcon: document.querySelector(".session-item-icon") === null,
@@ -637,10 +664,12 @@ async function createWindow(): Promise<void> {
 											modelButtonHasCaret,
 										rightToggleChanged: beforeRightToggleCollapsed !== afterRightToggleCollapsed,
 										rightToggleSticky: sameRect(rightToggleCollapsedRect, rightToggleExpandedRect),
+										rightToggleHitTarget: isHitTarget(rightToggle),
 										rightToggleCollapsedRect,
 										rightToggleExpandedRect,
 								threePanelComposerHintDisplay,
 								topbarHeight,
+									topbarIsDragRegion: getComputedStyle(document.querySelector(".topbar")).webkitAppRegion === "drag",
 									focusedControlHasRing: focusedControlShadow !== "none",
 									sendButtonIsNeutral: sendButtonBg !== "rgb(87, 213, 195)",
 										activeSessionHasInsetOnly: activeSessionShadow.includes("inset") && !activeSessionShadow.includes(" 0px 10px "),

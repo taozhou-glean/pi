@@ -273,6 +273,7 @@ button:disabled {
 }
 
 .sidebar-chrome {
+	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 10px;
@@ -285,6 +286,20 @@ button:disabled {
 
 body[data-platform="mac"] .sidebar-chrome {
 	padding-left: calc(116px + var(--topbar-left-controls-width));
+}
+
+.sidebar-control-hit-area {
+	position: absolute;
+	top: 0;
+	left: 12px;
+	width: var(--topbar-left-controls-width);
+	height: 56px;
+	pointer-events: none;
+	-webkit-app-region: no-drag;
+}
+
+body[data-platform="mac"] .sidebar-control-hit-area {
+	left: 116px;
 }
 
 .sidebar-window-drag {
@@ -630,15 +645,14 @@ select:focus {
 	border-bottom: 1px solid var(--line);
 	background: var(--topbar);
 	backdrop-filter: blur(16px);
-	-webkit-app-region: drag;
 }
 
 #app.left-collapsed .topbar {
-	padding-left: calc(var(--topbar-left-controls-width) + 12px);
+	padding-left: calc(24px + var(--topbar-left-controls-width));
 }
 
 body[data-platform="mac"] #app.left-collapsed .topbar {
-	padding-left: 126px;
+	padding-left: calc(128px + var(--topbar-left-controls-width));
 }
 
 .topbar-left-controls {
@@ -687,6 +701,7 @@ body[data-platform="mac"] .topbar-left-controls {
 	flex: 1;
 	min-width: 0;
 	height: 100%;
+	-webkit-app-region: drag;
 }
 
 .session-title {
