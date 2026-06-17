@@ -668,16 +668,27 @@ async function createWindow(): Promise<void> {
 					const composerHeight = Math.round(document.querySelector(".composer-shell").getBoundingClientRect().height);
 					const composerShellOverflow = getComputedStyle(document.querySelector(".composer-shell")).overflow;
 					const defaultMessageTimeOpacity = getComputedStyle(document.querySelector(".message-time")).opacity;
+					const userMessageMeta = document.querySelector(".message.user .message-hover-meta");
+					const userMessageMetaOpacity = getComputedStyle(userMessageMeta).opacity;
+					const userMessageModelText = document.querySelector(".message.user .message-model")?.textContent;
+					const userMessageHasHeader = document.querySelector(".message.user .message-header") !== null;
 					const mainRect = document.querySelector(".main").getBoundingClientRect();
 					const assistantRect = document.querySelector(".message.assistant").getBoundingClientRect();
+					const userRect = document.querySelector(".message.user").getBoundingClientRect();
 					const composerRect = document.querySelector(".composer-shell").getBoundingClientRect();
 					const mainStyle = getComputedStyle(document.querySelector(".main"));
 					const mainLeft = Math.round(mainRect.left);
 					const mainRight = Math.round(mainRect.right);
 					const assistantLeft = Math.round(assistantRect.left);
 					const assistantRight = Math.round(assistantRect.right);
+					const userRight = Math.round(userRect.right);
+					const userWidth = Math.round(userRect.width);
+					const composerRight = Math.round(composerRect.right);
+					const composerWidth = Math.round(composerRect.width);
 					const assistantLeftGap = assistantLeft - mainLeft;
 					const composerLeftGap = Math.round(composerRect.left) - mainLeft;
+					const userRightGap = mainRight - userRight;
+					const composerRightGap = mainRight - composerRight;
 					const assistantContainedInMain = assistantRight <= mainRight + 1;
 				const prompt = document.querySelector("#prompt");
 				const defaultPromptHeight = Math.round(prompt.getBoundingClientRect().height);
@@ -712,6 +723,9 @@ async function createWindow(): Promise<void> {
 							projectsNeedingPagination,
 					modelText: document.querySelector("#composer-model")?.textContent,
 					userMessageText: document.querySelector(".message.user .message-body")?.textContent,
+					userMessageMetaHidden: userMessageMetaOpacity === "0",
+					userMessageModelText,
+					userMessageHasHeader,
 					markdownHeading: document.querySelector(".message.assistant .markdown h3, .message.assistant .markdown h4, .message.assistant .markdown h5")?.textContent,
 					markdownCode: document.querySelector(".message.assistant .markdown pre code")?.textContent,
 					markdownTableHeader: document.querySelector(".message.assistant .markdown table th")?.textContent,
@@ -770,6 +784,10 @@ async function createWindow(): Promise<void> {
 										composerShellAllowsMenus: composerShellOverflow === "visible",
 										assistantLeftGap,
 										composerLeftGap,
+										userRightGap,
+										composerRightGap,
+										userAlignedToComposerRight: Math.abs(userRightGap - composerRightGap) <= 1,
+										userBubbleIsNotFullWidth: userWidth < composerWidth,
 										assistantContainedInMain,
 										mainClipsOverflow: mainStyle.overflow === "hidden" && mainStyle.contain.includes("paint"),
 								promptAutosized: grownPromptHeight > defaultPromptHeight,

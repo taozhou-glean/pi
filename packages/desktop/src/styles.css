@@ -927,7 +927,11 @@ body.resizing-panels {
 
 .message.user {
 	align-self: flex-start;
-	width: min(var(--chat-width), 100%);
+	position: relative;
+	width: fit-content;
+	max-width: min(var(--chat-width), 100%);
+	margin-left: auto;
+	margin-right: calc(100% - min(var(--chat-width), 100%));
 	padding: 12px 14px;
 	border: 1px solid color-mix(in srgb, var(--ink) 8%, var(--line));
 	border-radius: 9px;
@@ -935,7 +939,7 @@ body.resizing-panels {
 }
 
 #app.left-collapsed .message.user {
-	align-self: center;
+	margin-right: calc((100% - min(var(--chat-width), 100%)) / 2);
 }
 
 .message.assistant,
@@ -996,8 +1000,33 @@ body.resizing-panels {
 }
 
 .message:hover .message-time,
-.message:focus-within .message-time {
+.message:focus-within .message-time,
+.message:hover .message-hover-meta,
+.message:focus-within .message-hover-meta {
 	opacity: 0.72;
+}
+
+.message-hover-meta {
+	position: absolute;
+	right: 10px;
+	bottom: calc(100% + 5px);
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	max-width: min(100%, 520px);
+	overflow: hidden;
+	color: var(--faint);
+	font-size: 11px;
+	font-weight: 620;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease;
+}
+
+.message-model {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .message-role {

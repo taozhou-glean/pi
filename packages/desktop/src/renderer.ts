@@ -620,6 +620,25 @@ function createMessage(message: DesktopMessage): HTMLElement {
 	const row = document.createElement("article");
 	row.className = `message ${message.role}`;
 
+	if (message.role === "user") {
+		const meta = document.createElement("div");
+		meta.className = "message-hover-meta";
+		if (state?.model) {
+			const model = document.createElement("span");
+			model.className = "message-model";
+			model.textContent = `${state.model.id} · ${state.thinkingLevel ?? "off"}`;
+			meta.append(model);
+		}
+		const time = document.createElement("time");
+		time.className = "message-time";
+		time.textContent = message.timestamp
+			? new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+			: "";
+		meta.append(time);
+		row.append(renderContent(message), meta);
+		return row;
+	}
+
 	const header = document.createElement("div");
 	header.className = "message-header";
 	const label = document.createElement("span");
