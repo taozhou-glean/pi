@@ -689,7 +689,7 @@ async function createWindow(): Promise<void> {
 							const errorStyle = getComputedStyle(document.querySelector(".message.error"));
 							const contextRowStyle = getComputedStyle(document.querySelector(".context-summary div"));
 							const sendButtonBg = getComputedStyle(document.querySelector("#send")).backgroundColor;
-							const activeSessionShadow = getComputedStyle(document.querySelector(".session-item.active")).boxShadow;
+							const activeSessionStyle = getComputedStyle(document.querySelector(".session-item.active"));
 							const responsiveBeforeCollapsed = app.classList.contains("left-collapsed");
 							const originalInnerWidth = window.innerWidth;
 							Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
@@ -765,7 +765,7 @@ async function createWindow(): Promise<void> {
 									topbarIsDragRegion: getComputedStyle(document.querySelector(".topbar")).webkitAppRegion === "drag",
 									focusedControlHasRing: focusedControlShadow !== "none",
 									sendButtonIsNeutral: sendButtonBg !== "rgb(87, 213, 195)",
-										activeSessionHasInsetOnly: activeSessionShadow.includes("inset") && !activeSessionShadow.includes(" 0px 10px "),
+										activeSessionHasNoHeavyShadow: activeSessionStyle.boxShadow === "none",
 										composerHeight,
 										composerShellAllowsMenus: composerShellOverflow === "visible",
 										assistantLeftGap,

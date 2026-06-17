@@ -586,8 +586,8 @@ select:focus {
 
 .session-item:hover,
 .session-item.active {
-	background: var(--nav-control-bg);
-	border-color: var(--nav-control-border);
+	background: color-mix(in srgb, var(--nav-text) 7%, transparent);
+	border-color: transparent;
 	border-radius: 8px;
 	transform: none;
 }
@@ -602,8 +602,7 @@ select:focus {
 }
 
 .session-item.active {
-	background: color-mix(in srgb, var(--nav-control-bg) 86%, transparent);
-	box-shadow: inset 2px 0 0 color-mix(in srgb, var(--nav-text) 34%, transparent);
+	background: color-mix(in srgb, var(--nav-text) 10%, transparent);
 }
 
 .session-pagination {
