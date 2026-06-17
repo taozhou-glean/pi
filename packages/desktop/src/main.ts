@@ -73,18 +73,59 @@ type DesktopSessionInfo = {
 let mainWindow: BrowserWindow | undefined;
 let current: CreateAgentSessionResult | undefined;
 let currentServices: AgentSessionServices | undefined;
+const servicesByCwd = new Map<string, AgentSessionServices>();
+const serviceCreationsByCwd = new Map<string, Promise<AgentSessionServices>>();
 let sessionCreation: Promise<DesktopState> | undefined;
 let unsubscribeSession: (() => void) | undefined;
 let currentCwd = resolve(process.env.PI_DESKTOP_CWD || process.cwd());
 let currentSessionDir: string | undefined;
 const providerAllowlist = ["glean"];
 const envSessionDir = "PI_CODING_AGENT_SESSION_DIR";
+let isQuitting = false;
 
 function getSession(): AgentSession {
 	if (!current?.session) {
 		throw new Error("Desktop session has not been initialized");
 	}
 	return current.session;
+}
+
+async function getOrCreateDesktopServices(cwd: string): Promise<AgentSessionServices> {
+	const resolvedCwd = resolve(cwd);
+	const cached = servicesByCwd.get(resolvedCwd);
+	if (cached) return cached;
+
+	const existingCreation = serviceCreationsByCwd.get(resolvedCwd);
+	if (existingCreation) return existingCreation;
+
+	const creation = createAgentSessionServices({
+		cwd: resolvedCwd,
+		providerAllowlist,
+	})
+		.then((services) => {
+			if (isQuitting) {
+				services.mcpDisconnect?.().catch(() => {});
+			} else {
+				servicesByCwd.set(resolvedCwd, services);
+			}
+			return services;
+		})
+		.finally(() => {
+			serviceCreationsByCwd.delete(resolvedCwd);
+		});
+	serviceCreationsByCwd.set(resolvedCwd, creation);
+	return creation;
+}
+
+function warmDesktopServices(cwds: Iterable<string>): void {
+	for (const cwd of new Set(Array.from(cwds, (entry) => resolve(entry)))) {
+		if (cwd === currentServices?.cwd || servicesByCwd.has(cwd) || serviceCreationsByCwd.has(cwd)) {
+			continue;
+		}
+		getOrCreateDesktopServices(cwd).catch((error) => {
+			console.warn(`Failed to warm desktop services for ${cwd}:`, error);
+		});
+	}
 }
 
 function expandTilde(path: string): string {
@@ -294,27 +335,19 @@ async function createDesktopSessionInner(
 		targetCwd = resolve(opened.getCwd());
 	}
 	const previousServices = currentServices;
-	const canReuseServices = Boolean(previousServices && previousServices.cwd === targetCwd);
 
 	unsubscribeSession?.();
 	unsubscribeSession = undefined;
 	current?.session.dispose();
 	current = undefined;
-	if (!canReuseServices) {
-		await currentServices?.mcpDisconnect?.();
-		currentServices = undefined;
-	}
 
 	let sessionManager: SessionManager;
 	currentCwd = targetCwd;
 
-	currentServices =
-		canReuseServices && previousServices
-			? previousServices
-			: await createAgentSessionServices({
-					cwd: currentCwd,
-					providerAllowlist,
-				});
+	currentServices = previousServices?.cwd === currentCwd ? previousServices : servicesByCwd.get(currentCwd);
+	if (!currentServices) {
+		currentServices = await getOrCreateDesktopServices(currentCwd);
+	}
 	currentSessionDir = resolveSessionDir(currentServices.settingsManager.getSessionDir());
 	if (options.sessionPath) {
 		sessionManager = SessionManager.open(options.sessionPath, currentSessionDir, currentCwd);
@@ -337,7 +370,7 @@ async function createDesktopSessionInner(
 
 async function listDesktopSessions(): Promise<DesktopSessionInfo[]> {
 	const sessions = await SessionManager.listAll(currentSessionDir);
-	const serialized = sessions.slice(0, 40).map(serializeSessionInfo);
+	const serialized = sessions.map(serializeSessionInfo);
 	const session = getSession();
 	if (session.sessionFile && !serialized.some((entry) => entry.path === session.sessionFile)) {
 		const activeSession = sessions.find((entry) => entry.path === session.sessionFile);
@@ -355,6 +388,7 @@ async function listDesktopSessions(): Promise<DesktopSessionInfo[]> {
 					},
 		);
 	}
+	warmDesktopServices(serialized.map((entry) => entry.cwd));
 	return serialized;
 }
 
@@ -415,12 +449,33 @@ async function createWindow(): Promise<void> {
 	mainWindow.focus();
 	if (process.env.PI_DESKTOP_SMOKE === "1") {
 		const result = await mainWindow.webContents.executeJavaScript(`
-			(async () => {
-				await new Promise((resolve) => setTimeout(resolve, 250));
-				const state = await window.piDesktop.getState();
-					const sessions = await window.piDesktop.listSessions();
-					const git = await window.piDesktop.gitStatus();
-						const app = document.querySelector("#app");
+				(async () => {
+					await new Promise((resolve) => setTimeout(resolve, 250));
+					const state = await window.piDesktop.getState();
+						const sessions = await window.piDesktop.listSessions();
+						const git = await window.piDesktop.gitStatus();
+						window.__piDesktopTest.renderState(state);
+						window.__piDesktopTest.sessions = sessions;
+						window.__piDesktopTest.renderSessionList();
+						const expectedProjectCount = new Set(sessions.map((session) => session.cwd)).size;
+						const renderedProjectCount = document.querySelectorAll(".session-group-heading").length;
+						const renderedSessionCount = document.querySelectorAll(".session-item").length;
+						const paginationCount = document.querySelectorAll(".session-pagination").length;
+						const projectCounts = sessions.reduce((counts, session) => {
+							counts.set(session.cwd, (counts.get(session.cwd) ?? 0) + 1);
+							return counts;
+						}, new Map());
+						const projectsNeedingPagination = Array.from(projectCounts.values()).filter((count) => count > 5).length;
+						if (renderedProjectCount !== expectedProjectCount) {
+							throw new Error("Sidebar did not render every project group");
+						}
+						if (renderedSessionCount >= sessions.length && projectsNeedingPagination > 0) {
+							throw new Error("Sidebar rendered all sessions instead of paginating within projects");
+						}
+						if (paginationCount !== projectsNeedingPagination) {
+							throw new Error("Sidebar pagination controls do not match projects needing pagination");
+						}
+							const app = document.querySelector("#app");
 						const leftResizer = document.querySelector("#left-resizer");
 						const leftToggle = document.querySelector("#toggle-left-panel");
 						const newChatButton = document.querySelector("[data-new-session]");
@@ -649,7 +704,12 @@ async function createWindow(): Promise<void> {
 						cwd: state.cwd,
 					sessionDir: state.sessionDir,
 					sessionId: state.sessionId,
-					sessionCount: sessions.length,
+							sessionCount: sessions.length,
+							expectedProjectCount,
+							renderedProjectCount,
+							renderedSessionCount,
+							paginationCount,
+							projectsNeedingPagination,
 					modelText: document.querySelector("#composer-model")?.textContent,
 					userMessageText: document.querySelector(".message.user .message-body")?.textContent,
 					markdownHeading: document.querySelector(".message.assistant .markdown h3, .message.assistant .markdown h4, .message.assistant .markdown h5")?.textContent,
@@ -871,6 +931,12 @@ app.on("activate", async () => {
 });
 
 app.on("before-quit", () => {
+	isQuitting = true;
 	unsubscribeSession?.();
 	current?.session.dispose();
+	for (const services of servicesByCwd.values()) {
+		services.mcpDisconnect?.().catch(() => {});
+	}
+	servicesByCwd.clear();
+	serviceCreationsByCwd.clear();
 });

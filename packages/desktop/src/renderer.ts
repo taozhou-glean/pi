@@ -84,6 +84,9 @@ declare global {
 		piDesktop: PiDesktopApi;
 		__piDesktopTest?: {
 			renderMessages(messages: DesktopMessage[]): void;
+			renderState(next: DesktopState): void;
+			renderSessionList(): void;
+			sessions: DesktopSessionInfo[];
 		};
 	}
 }
@@ -130,6 +133,8 @@ let switchingSessionPath: string | undefined;
 let renderedSessionId: string | undefined;
 let visibleMessageLimit = 120;
 const messagePageSize = 120;
+const projectSessionPageSize = 5;
+const projectSessionLimits = new Map<string, number>();
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 const themeStorageKey = "pi-desktop-theme";
 const layoutStorageKey = "pi-desktop-layout";
@@ -715,7 +720,17 @@ function renderMessages(messages: DesktopMessage[]): void {
 	messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-window.__piDesktopTest = { renderMessages };
+window.__piDesktopTest = {
+	renderMessages,
+	renderState,
+	renderSessionList,
+	get sessions() {
+		return sessions;
+	},
+	set sessions(next: DesktopSessionInfo[]) {
+		sessions = next;
+	},
+};
 
 function renderState(next: DesktopState): void {
 	state = next;
@@ -847,6 +862,12 @@ function renderSessionList(): void {
 	const orderedGroups = [...groups.entries()].sort(([, sessionsA], [, sessionsB]) => {
 		return modifiedTime(sessionsB[0]) - modifiedTime(sessionsA[0]);
 	});
+	const currentProjectKeys = new Set(orderedGroups.map(([cwd]) => cwd));
+	for (const cwd of projectSessionLimits.keys()) {
+		if (!currentProjectKeys.has(cwd)) {
+			projectSessionLimits.delete(cwd);
+		}
+	}
 
 	for (const [cwd, projectSessions] of orderedGroups) {
 		const heading = document.createElement("div");
@@ -861,7 +882,10 @@ function renderSessionList(): void {
 		heading.append(icon, label);
 		sessionList.append(heading);
 
-		for (const session of projectSessions) {
+		const activeIndex = projectSessions.findIndex((session) => session.id === state?.sessionId);
+		const defaultLimit = activeIndex >= projectSessionPageSize ? activeIndex + 1 : projectSessionPageSize;
+		const visibleLimit = Math.min(projectSessionLimits.get(cwd) ?? defaultLimit, projectSessions.length);
+		for (const session of projectSessions.slice(0, visibleLimit)) {
 			const button = document.createElement("button");
 			button.type = "button";
 			button.disabled = session.path === switchingSessionPath;
@@ -885,6 +909,34 @@ function renderSessionList(): void {
 				}
 			});
 			sessionList.append(button);
+		}
+		if (projectSessions.length > projectSessionPageSize) {
+			const controls = document.createElement("div");
+			controls.className = "session-pagination";
+			const hiddenCount = projectSessions.length - visibleLimit;
+			if (hiddenCount > 0) {
+				const showMore = document.createElement("button");
+				showMore.type = "button";
+				showMore.className = "session-pagination-button";
+				showMore.textContent = `Show ${Math.min(projectSessionPageSize, hiddenCount)} more`;
+				showMore.addEventListener("click", () => {
+					projectSessionLimits.set(cwd, Math.min(visibleLimit + projectSessionPageSize, projectSessions.length));
+					renderSessionList();
+				});
+				controls.append(showMore);
+			}
+			if (visibleLimit > projectSessionPageSize) {
+				const showLess = document.createElement("button");
+				showLess.type = "button";
+				showLess.className = "session-pagination-button";
+				showLess.textContent = "Show less";
+				showLess.addEventListener("click", () => {
+					projectSessionLimits.delete(cwd);
+					renderSessionList();
+				});
+				controls.append(showLess);
+			}
+			sessionList.append(controls);
 		}
 	}
 }
@@ -948,7 +1000,7 @@ async function switchToSession(sessionPath: string): Promise<void> {
 		renderMessages(await window.piDesktop.getMessages());
 		messagesEl.classList.remove("loading-session");
 		refreshModels().catch(showError);
-		Promise.all([refreshSessions(), refreshGit()]).catch(showError);
+		refreshGit().catch(showError);
 	} finally {
 		switchingSessionPath = undefined;
 		renderSessionList();

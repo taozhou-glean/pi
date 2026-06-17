@@ -606,6 +606,30 @@ select:focus {
 	box-shadow: inset 2px 0 0 color-mix(in srgb, var(--nav-text) 34%, transparent);
 }
 
+.session-pagination {
+	display: flex;
+	gap: 14px;
+	margin: 2px 4px 7px 30px;
+}
+
+.session-pagination-button {
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: color-mix(in srgb, var(--nav-muted) 82%, transparent);
+	font-size: 12px;
+	font-weight: 560;
+	box-shadow: none;
+}
+
+.session-pagination-button:hover {
+	color: var(--nav-text);
+	background: transparent;
+	box-shadow: none;
+	transform: none;
+}
+
 .session-item-title {
 	overflow: hidden;
 	text-overflow: ellipsis;
