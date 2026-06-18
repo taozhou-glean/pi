@@ -40,6 +40,13 @@ type DesktopContent =
 	| { type: "image"; data: string; mimeType: string }
 	| DesktopToolCall;
 
+type DesktopPromptImage = { type: "image"; data: string; mimeType: string };
+
+type DesktopPromptPayload = {
+	text: string;
+	images?: DesktopPromptImage[];
+};
+
 type DesktopToolCall = {
 	type: "toolCall";
 	id: string;
@@ -264,6 +271,30 @@ function serializeSessionInfo(session: SessionInfo): DesktopSessionInfo {
 		messageCount: session.messageCount,
 		firstMessage: session.firstMessage,
 	};
+}
+
+function normalizePromptPayload(payload: unknown): DesktopPromptPayload {
+	if (typeof payload === "string") {
+		return { text: payload, images: [] };
+	}
+	if (!payload || typeof payload !== "object") {
+		return { text: "", images: [] };
+	}
+	const typed = payload as { text?: unknown; images?: unknown };
+	const images = Array.isArray(typed.images)
+		? typed.images
+				.filter((image): image is DesktopPromptImage =>
+					Boolean(
+						image &&
+							typeof image === "object" &&
+							(image as { type?: unknown }).type === "image" &&
+							typeof (image as { data?: unknown }).data === "string" &&
+							typeof (image as { mimeType?: unknown }).mimeType === "string",
+					),
+				)
+				.map((image) => ({ type: "image" as const, data: image.data, mimeType: image.mimeType }))
+		: [];
+	return { text: typeof typed.text === "string" ? typed.text : "", images };
 }
 
 function serializeState(): DesktopState {
@@ -697,6 +728,56 @@ async function createWindow(): Promise<void> {
 				await new Promise((resolve) => setTimeout(resolve, 0));
 					const grownPromptHeight = Math.round(prompt.getBoundingClientRect().height);
 						const textareaResize = getComputedStyle(prompt).resize;
+						const pastedImageFile = new File(
+							[new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])],
+							"paste.png",
+							{ type: "image/png" },
+						);
+						const pasteData = new DataTransfer();
+						pasteData.items.add(pastedImageFile);
+						const pasteEvent = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+						Object.defineProperty(pasteEvent, "clipboardData", { value: pasteData });
+						prompt.dispatchEvent(pasteEvent);
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const pastedAttachmentCount = document.querySelectorAll(".composer-attachment").length;
+						const pastedAttachmentPreviewed = document.querySelector(".composer-attachment img") !== null;
+						const sendEnabledWithPastedImage = document.querySelector("#send").disabled === false;
+						document.querySelector(".composer-attachment-preview")?.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const largePreviewOpened =
+							document.querySelector(".image-preview-overlay")?.hidden === false &&
+							document.querySelector(".image-preview-dialog img") !== null;
+						const previewImage = document.querySelector(".image-preview-dialog img");
+						const initialZoomLabel = document.querySelector(".image-preview-zoom-label")?.textContent;
+						document.querySelectorAll(".image-preview-zoom-button")[1]?.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const zoomedInLabel = document.querySelector(".image-preview-zoom-label")?.textContent;
+						const zoomedInScale = previewImage?.style.getPropertyValue("--preview-zoom");
+						document.querySelectorAll(".image-preview-zoom-button")[0]?.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const zoomedOutLabel = document.querySelector(".image-preview-zoom-label")?.textContent;
+						const zoomedOutScale = previewImage?.style.getPropertyValue("--preview-zoom");
+						document.querySelector(".image-preview-close")?.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const largePreviewClosed = document.querySelector(".image-preview-overlay")?.hidden === true;
+						document.querySelector(".composer-attachment-remove")?.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const pastedAttachmentRemoved = document.querySelectorAll(".composer-attachment").length === 0;
+						if (
+							pastedAttachmentCount !== 1 ||
+							!pastedAttachmentPreviewed ||
+							!sendEnabledWithPastedImage ||
+							!largePreviewOpened ||
+							initialZoomLabel !== "100%" ||
+							zoomedInLabel !== "125%" ||
+							zoomedInScale !== "1.25" ||
+							zoomedOutLabel !== "100%" ||
+							zoomedOutScale !== "1" ||
+							!largePreviewClosed ||
+							!pastedAttachmentRemoved
+						) {
+							throw new Error("Composer image paste preview did not behave as expected");
+						}
 							const errorStyle = getComputedStyle(document.querySelector(".message.error"));
 							const contextRowStyle = getComputedStyle(document.querySelector(".context-summary div"));
 							const sendButtonBg = getComputedStyle(document.querySelector("#send")).backgroundColor;
@@ -790,9 +871,20 @@ async function createWindow(): Promise<void> {
 										userBubbleIsNotFullWidth: userWidth < composerWidth,
 										assistantContainedInMain,
 										mainClipsOverflow: mainStyle.overflow === "hidden" && mainStyle.contain.includes("paint"),
-								promptAutosized: grownPromptHeight > defaultPromptHeight,
+						promptAutosized: grownPromptHeight > defaultPromptHeight,
 						defaultMessageTimeOpacity,
 						textareaResize,
+						pastedAttachmentCount,
+						pastedAttachmentPreviewed,
+						sendEnabledWithPastedImage,
+						largePreviewOpened,
+						initialZoomLabel,
+						zoomedInLabel,
+						zoomedInScale,
+						zoomedOutLabel,
+						zoomedOutScale,
+						largePreviewClosed,
+						pastedAttachmentRemoved,
 						errorHasFrame: errorStyle.borderTopStyle !== "none" && errorStyle.paddingTop !== "0px",
 						contextRowsAreFlat: contextRowStyle.borderLeftStyle === "none" && contextRowStyle.backgroundColor === "rgba(0, 0, 0, 0)",
 						responsiveBeforeCollapsed,
@@ -882,9 +974,13 @@ ipcMain.handle("pi:list-sessions", async () => {
 });
 ipcMain.handle("pi:new-session", async () => createDesktopSession({ cwd: currentCwd, fresh: true }));
 ipcMain.handle("pi:switch-session", async (_event, sessionPath: string) => createDesktopSession({ sessionPath }));
-ipcMain.handle("pi:prompt", async (_event, message: string) => {
+ipcMain.handle("pi:prompt", async (_event, payload: unknown) => {
 	await ensureDesktopSession();
-	await getSession().prompt(message, { streamingBehavior: getSession().isStreaming ? "followUp" : undefined });
+	const prompt = normalizePromptPayload(payload);
+	await getSession().prompt(prompt.text, {
+		images: prompt.images,
+		streamingBehavior: getSession().isStreaming ? "followUp" : undefined,
+	});
 	return serializeState();
 });
 ipcMain.handle("pi:abort", async () => {

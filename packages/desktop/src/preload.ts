@@ -7,7 +7,8 @@ const api = {
 	listSessions: () => ipcRenderer.invoke("pi:list-sessions"),
 	newSession: () => ipcRenderer.invoke("pi:new-session"),
 	switchSession: (sessionPath: string) => ipcRenderer.invoke("pi:switch-session", sessionPath),
-	prompt: (message: string) => ipcRenderer.invoke("pi:prompt", message),
+	prompt: (message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> }) =>
+		ipcRenderer.invoke("pi:prompt", message),
 	abort: () => ipcRenderer.invoke("pi:abort"),
 	chooseContext: (kind: "files" | "folder" | "workspace") => ipcRenderer.invoke("pi:choose-context", kind),
 	setCwd: (cwd: string) => ipcRenderer.invoke("pi:set-cwd", cwd),

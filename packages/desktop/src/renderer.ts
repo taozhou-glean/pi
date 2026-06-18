@@ -60,6 +60,14 @@ type GitStatus = {
 	error?: string;
 };
 
+type ComposerImageAttachment = {
+	id: string;
+	data: string;
+	mimeType: string;
+	name: string;
+	objectUrl: string;
+};
+
 type PiDesktopApi = {
 	init(): Promise<DesktopState>;
 	getState(): Promise<DesktopState>;
@@ -67,7 +75,9 @@ type PiDesktopApi = {
 	listSessions(): Promise<DesktopSessionInfo[]>;
 	newSession(): Promise<DesktopState>;
 	switchSession(sessionPath: string): Promise<DesktopState>;
-	prompt(message: string): Promise<DesktopState>;
+	prompt(
+		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
+	): Promise<DesktopState>;
 	abort(): Promise<DesktopState>;
 	chooseContext(kind: "files" | "folder" | "workspace"): Promise<string[]>;
 	setCwd(cwd: string): Promise<DesktopState>;
@@ -125,10 +135,19 @@ const composer = document.querySelector<HTMLFormElement>("#composer")!;
 const promptInput = document.querySelector<HTMLTextAreaElement>("#prompt")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
 const abortButton = document.querySelector<HTMLButtonElement>("#abort")!;
+const composerAttachments = document.createElement("div");
+composerAttachments.className = "composer-attachments";
+composerAttachments.hidden = true;
+promptInput.before(composerAttachments);
+const imagePreviewOverlay = document.createElement("div");
+imagePreviewOverlay.className = "image-preview-overlay";
+imagePreviewOverlay.hidden = true;
+document.body.append(imagePreviewOverlay);
 
 let state: DesktopState | undefined;
 let models: DesktopModel[] = [];
 let sessions: DesktopSessionInfo[] = [];
+let composerImages: ComposerImageAttachment[] = [];
 let switchingSessionPath: string | undefined;
 let renderedSessionId: string | undefined;
 let visibleMessageLimit = 120;
@@ -356,11 +375,15 @@ function formatRelative(value: string): string {
 }
 
 function setBusy(isBusy: boolean): void {
-	sendButton.disabled = isBusy;
 	abortButton.disabled = !isBusy;
 	sendButton.setAttribute("aria-label", isBusy ? "Working" : "Send");
 	runState.textContent = isBusy ? "Running" : "Idle";
 	runState.className = `run-state ${isBusy ? "running" : "idle"}`;
+	if (isBusy) {
+		sendButton.disabled = true;
+	} else {
+		syncSendButtonState();
+	}
 }
 
 function roleLabel(role: string): string {
@@ -1049,6 +1072,172 @@ function autosizePrompt(): void {
 	promptInput.style.height = `${Math.min(promptInput.scrollHeight, 220)}px`;
 }
 
+function syncSendButtonState(): void {
+	sendButton.disabled =
+		Boolean(state?.isStreaming) || (promptInput.value.trim().length === 0 && composerImages.length === 0);
+}
+
+function closeImagePreview(): void {
+	imagePreviewOverlay.hidden = true;
+	imagePreviewOverlay.replaceChildren();
+}
+
+function openImagePreview(attachment: ComposerImageAttachment): void {
+	imagePreviewOverlay.replaceChildren();
+	let zoom = 1;
+	const minZoom = 0.5;
+	const maxZoom = 3;
+	const zoomStep = 0.25;
+
+	const dialog = document.createElement("div");
+	dialog.className = "image-preview-dialog";
+	dialog.setAttribute("role", "dialog");
+	dialog.setAttribute("aria-modal", "true");
+	dialog.setAttribute("aria-label", attachment.name);
+
+	const image = document.createElement("img");
+	image.src = attachment.objectUrl;
+	image.alt = attachment.name;
+
+	const zoomBar = document.createElement("div");
+	zoomBar.className = "image-preview-zoom";
+
+	const zoomOut = document.createElement("button");
+	zoomOut.type = "button";
+	zoomOut.className = "image-preview-zoom-button";
+	zoomOut.title = "Zoom out";
+	zoomOut.setAttribute("aria-label", "Zoom out");
+	zoomOut.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg>`;
+
+	const zoomLabel = document.createElement("div");
+	zoomLabel.className = "image-preview-zoom-label";
+
+	const zoomIn = document.createElement("button");
+	zoomIn.type = "button";
+	zoomIn.className = "image-preview-zoom-button";
+	zoomIn.title = "Zoom in";
+	zoomIn.setAttribute("aria-label", "Zoom in");
+	zoomIn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>`;
+
+	const updateZoom = () => {
+		image.style.setProperty("--preview-zoom", String(zoom));
+		zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+		zoomOut.disabled = zoom <= minZoom;
+		zoomIn.disabled = zoom >= maxZoom;
+	};
+	zoomOut.addEventListener("click", () => {
+		zoom = Math.max(minZoom, zoom - zoomStep);
+		updateZoom();
+	});
+	zoomIn.addEventListener("click", () => {
+		zoom = Math.min(maxZoom, zoom + zoomStep);
+		updateZoom();
+	});
+
+	const close = document.createElement("button");
+	close.type = "button";
+	close.className = "image-preview-close";
+	close.title = "Close preview";
+	close.setAttribute("aria-label", "Close preview");
+	close.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>`;
+	close.addEventListener("click", closeImagePreview);
+
+	updateZoom();
+	zoomBar.append(zoomOut, zoomLabel, zoomIn);
+	dialog.append(image, close);
+	imagePreviewOverlay.append(dialog, zoomBar);
+	imagePreviewOverlay.hidden = false;
+	close.focus();
+}
+
+function renderComposerAttachments(): void {
+	composerAttachments.replaceChildren();
+	composerAttachments.hidden = composerImages.length === 0;
+	for (const attachment of composerImages) {
+		const item = document.createElement("div");
+		item.className = "composer-attachment";
+
+		const preview = document.createElement("button");
+		preview.type = "button";
+		preview.className = "composer-attachment-preview";
+		preview.title = `Preview ${attachment.name}`;
+		preview.setAttribute("aria-label", `Preview ${attachment.name}`);
+		preview.addEventListener("click", () => openImagePreview(attachment));
+
+		const image = document.createElement("img");
+		image.src = attachment.objectUrl;
+		image.alt = attachment.name;
+		preview.append(image);
+
+		const remove = document.createElement("button");
+		remove.type = "button";
+		remove.className = "composer-attachment-remove";
+		remove.title = `Remove ${attachment.name}`;
+		remove.setAttribute("aria-label", `Remove ${attachment.name}`);
+		remove.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7" /><path d="m11.5 4.5-7 7" /></svg>`;
+		remove.addEventListener("click", () => {
+			composerImages = composerImages.filter((candidate) => candidate.id !== attachment.id);
+			URL.revokeObjectURL(attachment.objectUrl);
+			closeImagePreview();
+			renderComposerAttachments();
+			syncSendButtonState();
+			promptInput.focus();
+		});
+
+		item.append(preview, remove);
+		composerAttachments.append(item);
+	}
+	syncSendButtonState();
+}
+
+function clearComposerImages(): void {
+	for (const attachment of composerImages) {
+		URL.revokeObjectURL(attachment.objectUrl);
+	}
+	composerImages = [];
+	renderComposerAttachments();
+}
+
+function readImageAttachment(file: File): Promise<ComposerImageAttachment> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.addEventListener("load", () => {
+			const result = typeof reader.result === "string" ? reader.result : "";
+			const comma = result.indexOf(",");
+			const data = comma === -1 ? result : result.slice(comma + 1);
+			resolve({
+				id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+				data,
+				mimeType: file.type || "image/png",
+				name: file.name || "Pasted image",
+				objectUrl: URL.createObjectURL(file),
+			});
+		});
+		reader.addEventListener("error", () => reject(reader.error ?? new Error(`Failed to read ${file.name}`)));
+		reader.readAsDataURL(file);
+	});
+}
+
+function imageFilesFromClipboard(event: ClipboardEvent): File[] {
+	const data = event.clipboardData;
+	if (!data) return [];
+	const files: File[] = [];
+	for (const item of Array.from(data.items)) {
+		if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+		const file = item.getAsFile();
+		if (file) files.push(file);
+	}
+	if (files.length > 0) return files;
+	return Array.from(data.files).filter((file) => file.type.startsWith("image/"));
+}
+
+async function addComposerImageFiles(files: File[]): Promise<void> {
+	if (files.length === 0) return;
+	const attachments = await Promise.all(files.map(readImageAttachment));
+	composerImages = [...composerImages, ...attachments];
+	renderComposerAttachments();
+}
+
 function insertComposerContext(paths: string[]): void {
 	if (paths.length === 0) return;
 	const block = [
@@ -1065,12 +1254,18 @@ function insertComposerContext(paths: string[]): void {
 composer.addEventListener("submit", async (event) => {
 	event.preventDefault();
 	const message = promptInput.value.trim();
-	if (!message) return;
+	if (!message && composerImages.length === 0) return;
+	const images = composerImages.map((image) => ({
+		type: "image" as const,
+		data: image.data,
+		mimeType: image.mimeType,
+	}));
 	promptInput.value = "";
+	clearComposerImages();
 	autosizePrompt();
 	setBusy(true);
 	try {
-		renderState(await window.piDesktop.prompt(message));
+		renderState(await window.piDesktop.prompt({ text: message, images }));
 		await refreshSessions();
 	} catch (error) {
 		showError(error);
@@ -1084,7 +1279,23 @@ promptInput.addEventListener("keydown", (event) => {
 	}
 });
 
-promptInput.addEventListener("input", autosizePrompt);
+promptInput.addEventListener("input", () => {
+	autosizePrompt();
+	syncSendButtonState();
+});
+
+promptInput.addEventListener("paste", (event) => {
+	const files = imageFilesFromClipboard(event);
+	if (files.length === 0) return;
+	event.preventDefault();
+	addComposerImageFiles(files).catch(showError);
+});
+
+imagePreviewOverlay.addEventListener("click", (event) => {
+	if (event.target === imagePreviewOverlay) {
+		closeImagePreview();
+	}
+});
 
 abortButton.addEventListener("click", async () => {
 	try {
@@ -1219,6 +1430,7 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
 	if (event.key === "Escape") {
+		closeImagePreview();
 		closeComposerMenus();
 		promptInput.focus();
 	}

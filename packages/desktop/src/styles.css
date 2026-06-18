@@ -1181,6 +1181,204 @@ body.resizing-panels {
 	border-radius: 8px;
 }
 
+.composer-attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 4px 4px 8px;
+}
+
+.composer-attachments[hidden] {
+	display: none;
+}
+
+.composer-attachment {
+	position: relative;
+	width: 64px;
+	height: 64px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	overflow: hidden;
+	background: var(--panel-soft);
+}
+
+.composer-attachment-preview {
+	display: block;
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.composer-attachment-preview:hover:not(:disabled) {
+	background: transparent;
+	box-shadow: none;
+}
+
+.composer-attachment-preview:focus-visible {
+	outline: none;
+	box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 72%, transparent);
+}
+
+.composer-attachment img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.composer-attachment-remove {
+	position: absolute;
+	top: 3px;
+	right: 3px;
+	display: grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	min-height: 18px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.32);
+	border-radius: 5px;
+	background: rgba(12, 13, 14, 0.74);
+	color: white;
+	box-shadow: none;
+	opacity: 0.86;
+	backdrop-filter: blur(8px);
+}
+
+.composer-attachment-remove:hover:not(:disabled) {
+	background: rgba(12, 13, 14, 0.92);
+	box-shadow: none;
+	opacity: 1;
+}
+
+.composer-attachment-remove svg,
+.image-preview-close svg,
+.image-preview-zoom-button svg {
+	width: 13px;
+	height: 13px;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+}
+
+.image-preview-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 100;
+	display: grid;
+	place-items: center;
+	padding: 56px;
+	background: rgba(0, 0, 0, 0.72);
+	backdrop-filter: blur(2px);
+}
+
+.image-preview-overlay[hidden] {
+	display: none;
+}
+
+.image-preview-dialog {
+	position: relative;
+	max-width: min(88vw, 980px);
+	max-height: 84vh;
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--panel) 88%, black);
+	box-shadow: 0 26px 90px rgba(0, 0, 0, 0.58);
+	overflow: hidden;
+}
+
+.image-preview-dialog img {
+	display: block;
+	max-width: min(88vw, 980px);
+	max-height: 84vh;
+	object-fit: contain;
+	transform: scale(var(--preview-zoom, 1));
+	transform-origin: center;
+	transition: transform 120ms ease;
+}
+
+.image-preview-close {
+	position: absolute;
+	top: 10px;
+	right: 10px;
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	min-height: 30px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.28);
+	border-radius: 7px;
+	background: rgba(12, 13, 14, 0.68);
+	color: white;
+	box-shadow: none;
+	backdrop-filter: blur(8px);
+}
+
+.image-preview-close:hover:not(:disabled) {
+	background: rgba(12, 13, 14, 0.86);
+	box-shadow: none;
+}
+
+.image-preview-zoom {
+	position: fixed;
+	left: 50%;
+	bottom: 28px;
+	display: grid;
+	grid-template-columns: 54px 88px 54px;
+	align-items: center;
+	justify-items: center;
+	min-height: 60px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 999px;
+	background: rgba(48, 48, 48, 0.92);
+	color: white;
+	box-shadow: 0 12px 34px rgba(0, 0, 0, 0.34);
+	transform: translateX(-50%);
+	backdrop-filter: blur(10px);
+}
+
+.image-preview-zoom-button {
+	display: grid;
+	place-items: center;
+	width: 46px;
+	height: 46px;
+	min-height: 46px;
+	padding: 0;
+	border: 0;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.12);
+	color: white;
+	box-shadow: none;
+}
+
+.image-preview-zoom-button:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.2);
+	box-shadow: none;
+}
+
+.image-preview-zoom-button:disabled {
+	opacity: 0.34;
+}
+
+.image-preview-zoom-button svg {
+	width: 20px;
+	height: 20px;
+	stroke-width: 2;
+}
+
+.image-preview-zoom-label {
+	min-width: 70px;
+	text-align: center;
+	font-size: 17px;
+	font-weight: 680;
+	letter-spacing: 0;
+}
+
 .tool-stack {
 	display: flex;
 	flex-direction: column;
