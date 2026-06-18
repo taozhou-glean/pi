@@ -821,7 +821,7 @@ function toolStateLabel(result: DesktopMessage | undefined, execution?: { isErro
 }
 
 function appendInlineMarkdown(parent: HTMLElement, text: string): void {
-	const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g;
+	const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s<>)]+)/g;
 	let cursor = 0;
 	for (const match of text.matchAll(pattern)) {
 		const raw = match[0];
@@ -835,14 +835,21 @@ function appendInlineMarkdown(parent: HTMLElement, text: string): void {
 			const strong = document.createElement("strong");
 			strong.textContent = raw.slice(2, -2);
 			parent.append(strong);
+		} else if (raw.startsWith("http://") || raw.startsWith("https://")) {
+			const trailingMatch = /[.,!?;:]+$/.exec(raw);
+			const trailing = trailingMatch?.[0] ?? "";
+			const href = trailing ? raw.slice(0, -trailing.length) : raw;
+			const link = document.createElement("a");
+			link.href = href;
+			link.textContent = href;
+			parent.append(link);
+			if (trailing) parent.append(document.createTextNode(trailing));
 		} else {
 			const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(raw);
 			const href = linkMatch?.[2] ?? "";
 			if (/^https?:\/\//i.test(href)) {
 				const link = document.createElement("a");
 				link.href = href;
-				link.target = "_blank";
-				link.rel = "noreferrer";
 				link.textContent = linkMatch?.[1] ?? href;
 				parent.append(link);
 			} else {
@@ -2011,6 +2018,14 @@ messagesEl.addEventListener("scroll", () => {
 	shouldFollowMessages = isMessagesScrolledToBottom();
 });
 
+messagesEl.addEventListener("click", (event) => {
+	if (event.defaultPrevented) return;
+	const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : undefined;
+	if (!anchor || !messagesEl.contains(anchor) || !/^https?:\/\//i.test(anchor.href)) return;
+	event.preventDefault();
+	openUrlInRightBrowser(anchor.href);
+});
+
 imagePreviewOverlay.addEventListener("click", (event) => {
 	if (event.target === imagePreviewOverlay) {
 		closeImagePreview();
@@ -2160,6 +2175,14 @@ function ensureBrowserLoaded(input: HTMLInputElement, frame: HTMLElement): void 
 	if (frame.getAttribute("src") === "about:blank") {
 		openBrowserUrl(input.value, input, frame);
 	}
+}
+
+function openUrlInRightBrowser(url: string): void {
+	layoutState.rightTab = "browser";
+	layoutState.rightCollapsed = false;
+	applyLayoutState();
+	saveLayoutState();
+	openBrowserUrl(url, browserUrlInput, browserFrame);
 }
 
 function syncRightPanelContent(): void {
