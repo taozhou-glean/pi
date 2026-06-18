@@ -515,7 +515,7 @@ async function createWindow(): Promise<void> {
 		title: "Pi Desktop",
 		backgroundColor: "#111110",
 		titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
-		trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 18 } : undefined,
+		trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 17 } : undefined,
 		webPreferences: {
 			contextIsolation: true,
 			nodeIntegration: false,

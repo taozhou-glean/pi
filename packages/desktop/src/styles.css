@@ -254,7 +254,7 @@ button:disabled {
 	flex-direction: column;
 	gap: 18px;
 	min-width: 0;
-	padding: 56px 14px 18px;
+	padding: 48px 14px 18px;
 	background: var(--inspector);
 	border-left: 1px solid var(--line);
 	overflow: hidden;
@@ -273,15 +273,15 @@ button:disabled {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	height: 56px;
+	height: 48px;
 	margin: 0 -12px;
-	padding: 10px 12px 9px calc(12px + var(--topbar-left-controls-width));
+	padding: 0 12px 0 calc(12px + var(--topbar-left-controls-width));
 	border-bottom: 1px solid color-mix(in srgb, var(--nav-control-border) 64%, transparent);
 	-webkit-app-region: drag;
 }
 
 body[data-platform="mac"] .sidebar-chrome {
-	padding-left: calc(116px + var(--topbar-left-controls-width));
+	padding-left: calc(78px + var(--topbar-left-controls-width));
 }
 
 .sidebar-control-hit-area {
@@ -289,13 +289,13 @@ body[data-platform="mac"] .sidebar-chrome {
 	top: 0;
 	left: 12px;
 	width: var(--topbar-left-controls-width);
-	height: 56px;
+	height: 48px;
 	pointer-events: none;
 	-webkit-app-region: no-drag;
 }
 
 body[data-platform="mac"] .sidebar-control-hit-area {
-	left: 116px;
+	left: 78px;
 }
 
 .sidebar-window-drag {
@@ -907,7 +907,7 @@ select:focus {
 	align-items: center;
 	gap: 10px;
 	min-width: 0;
-	min-height: 56px;
+	min-height: 48px;
 	padding: 9px calc(var(--topbar-right-controls-width) + 12px) 9px 12px;
 	border-bottom: 1px solid var(--line);
 	background: var(--topbar);
@@ -919,7 +919,7 @@ select:focus {
 }
 
 body[data-platform="mac"] #app.left-collapsed .topbar {
-	padding-left: calc(128px + var(--topbar-left-controls-width));
+	padding-left: calc(90px + var(--topbar-left-controls-width));
 }
 
 .topbar-left-controls {
@@ -929,15 +929,16 @@ body[data-platform="mac"] #app.left-collapsed .topbar {
 	z-index: 30;
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	gap: 6px;
 	width: var(--topbar-left-controls-width);
-	height: 56px;
-	padding: 13px 12px;
+	height: 48px;
+	padding: 0 4px;
 	-webkit-app-region: no-drag;
 }
 
 body[data-platform="mac"] .topbar-left-controls {
-	left: 116px;
+	left: 78px;
+	padding-left: 0;
 }
 
 .chrome-button {
@@ -988,10 +989,11 @@ body[data-platform="mac"] .topbar-left-controls {
 	z-index: 30;
 	display: flex;
 	align-items: center;
+	justify-content: flex-end;
 	gap: 7px;
 	width: var(--topbar-right-controls-width);
-	height: 56px;
-	padding: 13px 12px;
+	height: 48px;
+	padding: 0 4px;
 	-webkit-app-region: no-drag;
 }
 
@@ -1912,6 +1914,12 @@ body.resizing-panels {
 	box-shadow: 0 12px 38px var(--shadow);
 }
 
+.composer-shell:focus-within {
+	border-color: var(--line-strong);
+	box-shadow: 0 12px 38px var(--shadow);
+	outline: none;
+}
+
 textarea {
 	width: 100%;
 	min-height: 58px;
@@ -1924,6 +1932,11 @@ textarea {
 	outline: none;
 	background: var(--panel);
 	color: var(--ink);
+}
+
+.composer-shell textarea:focus {
+	border-color: transparent;
+	box-shadow: none;
 }
 
 .composer-footer {
