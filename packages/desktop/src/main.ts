@@ -95,6 +95,7 @@ let currentServices: AgentSessionServices | undefined;
 const servicesByCwd = new Map<string, AgentSessionServices>();
 const serviceCreationsByCwd = new Map<string, Promise<AgentSessionServices>>();
 let sessionCreation: Promise<DesktopState> | undefined;
+let loginInFlight: Promise<DesktopLoginResult> | undefined;
 let unsubscribeSession: (() => void) | undefined;
 let currentCwd = resolve(process.env.PI_DESKTOP_CWD || process.cwd());
 let currentSessionDir: string | undefined;
@@ -543,6 +544,7 @@ async function createWindow(): Promise<void> {
 						await new Promise((resolve) => setTimeout(resolve, 0));
 						const loginScreenVisible = document.querySelector("#login-screen")?.hidden === false;
 						const loginButtonText = document.querySelector("#login-button")?.textContent;
+						const loginApiAvailable = typeof window.piDesktop.login === "function";
 						const composerHiddenForLogin = document.querySelector("#composer")?.hidden === true;
 						const messagesHiddenForLogin = document.querySelector("#messages")?.hidden === true;
 						const authRequiredClassApplied = document.querySelector("#app")?.classList.contains("auth-required") === true;
@@ -573,6 +575,7 @@ async function createWindow(): Promise<void> {
 						if (
 							!loginScreenVisible ||
 							loginButtonText !== "Sign in with Glean" ||
+							!loginApiAvailable ||
 							!composerHiddenForLogin ||
 							!messagesHiddenForLogin ||
 							!authRequiredClassApplied ||
@@ -1146,6 +1149,7 @@ async function createWindow(): Promise<void> {
 							projectsNeedingPagination,
 							loginScreenVisible,
 							loginButtonText,
+							loginApiAvailable,
 							composerHiddenForLogin,
 							messagesHiddenForLogin,
 							authRequiredClassApplied,
@@ -1429,31 +1433,47 @@ ipcMain.handle("pi:reload-session", async () => {
 	await getSession().reload();
 	return serializeState();
 });
-ipcMain.handle("pi:login", async (): Promise<DesktopLoginResult> => {
+async function loginDesktopSession(): Promise<DesktopLoginResult> {
 	await ensureDesktopSession();
 	const session = getSession();
 	const provider =
 		session.modelRegistry.authStorage.getOAuthProviders().find((candidate) => candidate.id === "glean") ??
 		session.modelRegistry.authStorage.getOAuthProviders()[0];
 	if (!provider) throw new Error("No OAuth login provider is available.");
-	await session.modelRegistry.authStorage.login(provider.id as never, {
-		onAuth: (info) => {
-			shell.openExternal(info.url).catch(() => {});
-		},
-		onDeviceCode: (info) => {
-			shell.openExternal(info.verificationUri).catch(() => {});
-		},
-		onPrompt: async () => "",
-		onProgress: () => {},
-		onManualCodeInput: () => new Promise<string>(() => {}),
-		onSelect: async (prompt) => prompt.options[0]?.id,
-	});
+	try {
+		await session.modelRegistry.authStorage.login(provider.id as never, {
+			onAuth: (info) => {
+				shell.openExternal(info.url).catch(() => {});
+			},
+			onDeviceCode: (info) => {
+				shell.openExternal(info.verificationUri).catch(() => {});
+			},
+			onPrompt: async () => "",
+			onProgress: () => {},
+			onManualCodeInput: () => new Promise<string>(() => {}),
+			onSelect: async (prompt) => prompt.options[0]?.id,
+		});
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "EADDRINUSE") {
+			throw new Error("Glean login is already in progress. Complete the browser login or restart Pi Desktop.");
+		}
+		throw error;
+	}
 	session.modelRegistry.refresh();
 	const availableModels = await session.modelRegistry.getAvailable();
 	if (availableModels.length > 0 && (!session.model || !session.modelRegistry.hasConfiguredAuth(session.model))) {
 		await session.setModel(availableModels[0]!);
 	}
 	return { state: serializeState(), message: `Logged in to ${provider.name}` };
+}
+
+ipcMain.handle("pi:login", async (): Promise<DesktopLoginResult> => {
+	if (!loginInFlight) {
+		loginInFlight = loginDesktopSession().finally(() => {
+			loginInFlight = undefined;
+		});
+	}
+	return loginInFlight;
 });
 ipcMain.handle("pi:logout", async () => {
 	await ensureDesktopSession();
