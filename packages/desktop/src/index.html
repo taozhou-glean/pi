@@ -318,7 +318,13 @@
 									<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
 								</button>
 							</div>
-							<webview id="browser-frame" class="browser-frame" src="about:blank"></webview>
+							<webview
+								id="browser-frame"
+								class="browser-frame"
+								src="about:blank"
+								allowpopups
+								webpreferences="allowRunningInsecureContent=no"
+							></webview>
 						</section>
 					</div>
 				</aside>
@@ -350,7 +356,13 @@
 							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
 						</button>
 					</div>
-					<webview id="bottom-browser-frame" class="browser-frame" src="about:blank"></webview>
+					<webview
+						id="bottom-browser-frame"
+						class="browser-frame"
+						src="about:blank"
+						allowpopups
+						webpreferences="allowRunningInsecureContent=no"
+					></webview>
 				</section>
 			</div>
 		</div>

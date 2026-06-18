@@ -547,6 +547,33 @@ async function createWindow(): Promise<void> {
 		},
 	});
 
+	mainWindow.webContents.on("will-attach-webview", (_event, webPreferences) => {
+		webPreferences.nodeIntegration = false;
+		webPreferences.contextIsolation = true;
+		webPreferences.webSecurity = true;
+		webPreferences.allowRunningInsecureContent = false;
+	});
+	mainWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
+		callback(
+			permission === "clipboard-read" ||
+				permission === "clipboard-write" ||
+				permission === "clipboard-sanitized-write",
+		);
+	});
+	mainWindow.webContents.setWindowOpenHandler((details) => {
+		if (/^https?:\/\//i.test(details.url)) {
+			shell.openExternal(details.url).catch((error) => {
+				console.warn(`Failed to open external URL ${details.url}:`, error);
+			});
+		}
+		return { action: "deny" };
+	});
+	mainWindow.webContents.on("will-navigate", (event, url) => {
+		if (url !== mainWindow?.webContents.getURL()) {
+			event.preventDefault();
+		}
+	});
+
 	if (process.env.PI_DESKTOP_SMOKE === "1") {
 		await mainWindow.webContents.session.clearStorageData({ storages: ["localstorage"] });
 	}

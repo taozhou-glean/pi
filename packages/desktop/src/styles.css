@@ -1404,6 +1404,70 @@ body.resizing-panels {
 	box-shadow: none;
 }
 
+.streaming-indicator {
+	display: flex;
+	align-items: center;
+	align-self: flex-start;
+	gap: 6px;
+	width: min(var(--chat-width), 100%);
+	padding: 12px 0;
+	color: var(--faint);
+	font-size: 13px;
+	animation: streaming-fade-in 150ms ease-out;
+}
+
+#app.left-collapsed .streaming-indicator {
+	align-self: center;
+}
+
+.streaming-indicator .dots {
+	display: inline-flex;
+	gap: 4px;
+}
+
+.streaming-indicator .dots span {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+	opacity: 0.4;
+	animation: streaming-dot 1.2s ease-in-out infinite;
+}
+
+.streaming-indicator .dots span:nth-child(2) {
+	animation-delay: 0.2s;
+}
+
+.streaming-indicator .dots span:nth-child(3) {
+	animation-delay: 0.4s;
+}
+
+@keyframes streaming-dot {
+	0%,
+	60%,
+	100% {
+		opacity: 0.4;
+		transform: scale(1);
+	}
+
+	30% {
+		opacity: 1;
+		transform: scale(1.3);
+	}
+}
+
+@keyframes streaming-fade-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
 .empty {
 	margin: auto;
 	max-width: 560px;
@@ -1595,6 +1659,55 @@ body.resizing-panels {
 	font-size: 15.5px;
 	color: var(--ink);
 	overflow-wrap: anywhere;
+}
+
+.message-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: 6px;
+	opacity: 0;
+	transition: opacity 150ms ease;
+}
+
+.message:hover .message-actions,
+.message-actions:focus-within {
+	opacity: 1;
+}
+
+.message-action-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	min-height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: var(--secondary-bg);
+	color: var(--faint);
+	box-shadow: none;
+}
+
+.message-action-btn svg {
+	width: 14px;
+	height: 14px;
+	fill: none;
+	stroke: currentColor;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 2;
+}
+
+.message-action-btn:hover:not(:disabled),
+.message-action-btn:focus-visible {
+	background: color-mix(in srgb, var(--secondary-bg) 86%, var(--ink));
+	color: var(--ink);
+}
+
+.message-action-btn.copied {
+	color: #4ade80;
 }
 
 .markdown > *:first-child {

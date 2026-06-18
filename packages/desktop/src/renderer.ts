@@ -759,6 +759,7 @@ async function executeSlashCommand(input: string): Promise<void> {
 	autosizePrompt();
 	syncSendButtonState();
 	setBusy(true);
+	showStreamingIndicator();
 	try {
 		await command.run(rawArgs.trim());
 	} catch (error) {
@@ -797,7 +798,28 @@ function setBusy(isBusy: boolean): void {
 	sendButton.innerHTML = isBusy ? sendButtonStopIcon : sendButtonSendIcon;
 	runState.textContent = isBusy ? "Running" : "Idle";
 	runState.className = `run-state ${isBusy ? "running" : "idle"}`;
+	if (!isBusy) hideStreamingIndicator();
 	syncSendButtonState();
+}
+
+function showStreamingIndicator(): void {
+	if (messagesEl.querySelector(".streaming-indicator")) return;
+	const indicator = document.createElement("div");
+	indicator.className = "streaming-indicator";
+	const label = document.createElement("span");
+	label.textContent = "Thinking";
+	const dots = document.createElement("span");
+	dots.className = "dots";
+	for (let index = 0; index < 3; index++) {
+		dots.append(document.createElement("span"));
+	}
+	indicator.append(label, dots);
+	messagesEl.append(indicator);
+	if (shouldFollowMessages || isMessagesScrolledToBottom()) scrollMessagesToBottom();
+}
+
+function hideStreamingIndicator(): void {
+	messagesEl.querySelector(".streaming-indicator")?.remove();
 }
 
 function roleLabel(role: string): string {
@@ -820,8 +842,12 @@ function toolStateLabel(result: DesktopMessage | undefined, execution?: { isErro
 	return "Running";
 }
 
+function isBrowserUrl(value: string): boolean {
+	return /^(https?|file):\/\//i.test(value);
+}
+
 function appendInlineMarkdown(parent: HTMLElement, text: string): void {
-	const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s<>)]+)/g;
+	const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)|(https?|file):\/\/[^\s<>)]+)/g;
 	let cursor = 0;
 	for (const match of text.matchAll(pattern)) {
 		const raw = match[0];
@@ -835,7 +861,7 @@ function appendInlineMarkdown(parent: HTMLElement, text: string): void {
 			const strong = document.createElement("strong");
 			strong.textContent = raw.slice(2, -2);
 			parent.append(strong);
-		} else if (raw.startsWith("http://") || raw.startsWith("https://")) {
+		} else if (isBrowserUrl(raw)) {
 			const trailingMatch = /[.,!?;:]+$/.exec(raw);
 			const trailing = trailingMatch?.[0] ?? "";
 			const href = trailing ? raw.slice(0, -trailing.length) : raw;
@@ -847,7 +873,7 @@ function appendInlineMarkdown(parent: HTMLElement, text: string): void {
 		} else {
 			const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(raw);
 			const href = linkMatch?.[2] ?? "";
-			if (/^https?:\/\//i.test(href)) {
+			if (isBrowserUrl(href)) {
 				const link = document.createElement("a");
 				link.href = href;
 				link.textContent = linkMatch?.[1] ?? href;
@@ -1195,6 +1221,32 @@ function createMessage(message: DesktopMessage): HTMLElement {
 		: "";
 	header.append(label, time);
 	row.append(header, renderContent(message));
+	const copyText = contentText(message).trim();
+	if (message.role === "assistant" && copyText) {
+		const footer = document.createElement("div");
+		footer.className = "message-actions";
+		const copyButton = document.createElement("button");
+		copyButton.type = "button";
+		copyButton.className = "message-action-btn";
+		copyButton.title = "Copy";
+		copyButton.setAttribute("aria-label", "Copy response");
+		copyButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>`;
+		copyButton.addEventListener("click", async () => {
+			try {
+				await navigator.clipboard.writeText(copyText);
+				copyButton.classList.add("copied");
+				copyButton.title = "Copied";
+				setTimeout(() => {
+					copyButton.classList.remove("copied");
+					copyButton.title = "Copy";
+				}, 1500);
+			} catch (error) {
+				showError(error);
+			}
+		});
+		footer.append(copyButton);
+		row.append(footer);
+	}
 	return row;
 }
 
@@ -1291,6 +1343,11 @@ function renderMessages(messages: DesktopMessage[]): void {
 		}
 		messagesEl.append(row);
 	}
+	const lastMessage = messages.at(-1);
+	const assistantHasContent =
+		lastMessage?.role === "assistant" &&
+		Boolean(contentText(lastMessage).trim() || lastMessage.content.length > 0 || lastMessage.toolCalls?.length);
+	if (isComposerBusy && !assistantHasContent) showStreamingIndicator();
 	if (followAfterRender) {
 		scrollMessagesToBottom();
 	} else {
@@ -1966,6 +2023,7 @@ composer.addEventListener("submit", async (event) => {
 	clearComposerAttachments();
 	autosizePrompt();
 	setBusy(true);
+	showStreamingIndicator();
 	try {
 		renderState(await window.piDesktop.prompt({ text: promptText, images }));
 		await refreshSessions();
@@ -2021,7 +2079,7 @@ messagesEl.addEventListener("scroll", () => {
 messagesEl.addEventListener("click", (event) => {
 	if (event.defaultPrevented) return;
 	const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : undefined;
-	if (!anchor || !messagesEl.contains(anchor) || !/^https?:\/\//i.test(anchor.href)) return;
+	if (!anchor || !messagesEl.contains(anchor) || !isBrowserUrl(anchor.href)) return;
 	event.preventDefault();
 	openUrlInRightBrowser(anchor.href);
 });
@@ -2166,7 +2224,7 @@ function mountTerminal(host: HTMLElement): void {
 function openBrowserUrl(value: string, input: HTMLInputElement, frame: HTMLElement): void {
 	const trimmed = value.trim();
 	if (!trimmed) return;
-	const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+	const url = new URL(isBrowserUrl(trimmed) ? trimmed : `https://${trimmed}`);
 	input.value = url.href;
 	frame.setAttribute("src", url.href);
 }
