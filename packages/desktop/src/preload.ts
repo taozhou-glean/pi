@@ -21,6 +21,15 @@ const api = {
 	logout: () => ipcRenderer.invoke("pi:logout"),
 	quit: () => ipcRenderer.invoke("pi:quit"),
 	gitStatus: () => ipcRenderer.invoke("pi:git-status"),
+	terminalCreate: () => ipcRenderer.invoke("pi:terminal-create"),
+	terminalWrite: (data: string) => ipcRenderer.send("pi:terminal-write", data),
+	terminalResize: (cols: number, rows: number) => ipcRenderer.send("pi:terminal-resize", cols, rows),
+	terminalDestroy: () => ipcRenderer.invoke("pi:terminal-destroy"),
+	onTerminalData: (handler: (data: string) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, data: string) => handler(data);
+		ipcRenderer.on("pi:terminal-data", listener);
+		return () => ipcRenderer.off("pi:terminal-data", listener);
+	},
 	onState: (handler: (state: unknown) => void) => {
 		const listener = (_event: Electron.IpcRendererEvent, state: unknown) => handler(state);
 		ipcRenderer.on("pi:state", listener);

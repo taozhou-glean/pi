@@ -25,8 +25,14 @@
 							aria-label="Toggle left sidebar"
 						>
 							<svg viewBox="0 0 24 24" aria-hidden="true">
-								<rect x="4" y="4" width="16" height="16" rx="3" />
-								<path d="M9 4v16" />
+								<g class="left-panel-open-icon">
+									<rect x="4" y="4" width="16" height="16" rx="3" />
+									<path d="M9 4v16" />
+								</g>
+								<g class="left-panel-closed-icon">
+									<rect x="7" y="4" width="13" height="16" rx="3" />
+									<path d="M4 7v10" />
+								</g>
 							</svg>
 						</button>
 						<button class="chrome-button" data-new-session title="New chat" aria-label="New chat">
@@ -234,6 +240,12 @@
 				</main>
 
 				<div class="actions">
+					<button id="toggle-bottom-panel" class="chrome-button" title="Toggle terminal (⌘J)" aria-label="Toggle terminal">
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<rect x="4" y="4" width="16" height="16" rx="3" />
+							<path d="M4 14h16" />
+						</svg>
+					</button>
 					<button id="toggle-right-panel" class="chrome-button" title="Toggle right inspector" aria-label="Toggle right inspector">
 						<svg viewBox="0 0 24 24" aria-hidden="true">
 							<rect x="4" y="4" width="16" height="16" rx="3" />
@@ -267,6 +279,20 @@
 					<div id="context-summary" class="context-summary"></div>
 				</section>
 			</aside>
+
+			<div id="bottom-panel" class="bottom-panel" hidden>
+				<div id="bottom-resizer" class="resizer bottom-resizer" role="separator" aria-label="Resize terminal" tabindex="0"></div>
+				<div class="bottom-panel-header">
+					<span class="bottom-panel-title">Terminal</span>
+					<button id="terminal-new-tab" class="icon-button" title="New terminal" aria-label="New terminal">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
+					</button>
+					<button id="terminal-close" class="icon-button" title="Close terminal" aria-label="Close terminal">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+					</button>
+				</div>
+				<div id="terminal-container" class="terminal-container"></div>
+			</div>
 		</div>
 		<script type="module" src="./renderer.js"></script>
 	</body>

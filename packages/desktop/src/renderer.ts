@@ -1,3 +1,6 @@
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+
 type DesktopState = {
 	cwd: string;
 	sessionDir?: string;
@@ -118,6 +121,11 @@ type PiDesktopApi = {
 	logout(): Promise<DesktopLogoutResult>;
 	quit(): Promise<void>;
 	gitStatus(): Promise<GitStatus>;
+	terminalCreate(): Promise<void>;
+	terminalWrite(data: string): void;
+	terminalResize(cols: number, rows: number): void;
+	terminalDestroy(): Promise<void>;
+	onTerminalData(handler: (data: string) => void): () => void;
 	onState(handler: (state: DesktopState) => void): () => void;
 	onMessages(handler: (messages: DesktopMessage[]) => void): () => void;
 	onEvent(handler: (event: unknown) => void): () => void;
@@ -146,6 +154,10 @@ const sidebarSettingsTrigger = document.querySelector<HTMLButtonElement>("#sideb
 const sidebarSettingsPopover = document.querySelector<HTMLDivElement>("#sidebar-settings-popover")!;
 const toggleLeftPanelButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-left-panel-toggle]"));
 const toggleRightPanelButton = document.querySelector<HTMLButtonElement>("#toggle-right-panel")!;
+const toggleBottomPanelButton = document.querySelector<HTMLButtonElement>("#toggle-bottom-panel")!;
+const bottomPanel = document.querySelector<HTMLDivElement>("#bottom-panel")!;
+const terminalContainer = document.querySelector<HTMLDivElement>("#terminal-container")!;
+const bottomResizer = document.querySelector<HTMLDivElement>("#bottom-resizer")!;
 const leftResizer = document.querySelector<HTMLDivElement>("#left-resizer")!;
 const rightResizer = document.querySelector<HTMLDivElement>("#right-resizer")!;
 const refreshSessionsButton = document.querySelector<HTMLButtonElement>("#refresh-sessions")!;
@@ -233,6 +245,8 @@ type LayoutState = {
 	rightWidth: number;
 	leftCollapsed: boolean;
 	rightCollapsed: boolean;
+	bottomHeight: number;
+	bottomCollapsed: boolean;
 };
 
 const layoutState: LayoutState = loadLayoutState();
@@ -264,9 +278,18 @@ function loadLayoutState(): LayoutState {
 			rightWidth: clamp(Number(parsed.rightWidth) || 320, minRightPanelWidth, maxRightPanelWidth),
 			leftCollapsed: parsed.leftCollapsed === true,
 			rightCollapsed: parsed.rightCollapsed === undefined ? true : parsed.rightCollapsed === true,
+			bottomHeight: clamp(Number(parsed.bottomHeight) || 240, 120, 600),
+			bottomCollapsed: parsed.bottomCollapsed !== false,
 		};
 	} catch {
-		return { leftWidth: 390, rightWidth: 320, leftCollapsed: false, rightCollapsed: true };
+		return {
+			leftWidth: 390,
+			rightWidth: 320,
+			leftCollapsed: false,
+			rightCollapsed: true,
+			bottomHeight: 240,
+			bottomCollapsed: true,
+		};
 	}
 }
 
@@ -279,12 +302,16 @@ function applyLayoutState(): void {
 	appEl.style.setProperty("--right-panel-width", `${layoutState.rightWidth}px`);
 	appEl.style.setProperty("--left-track", layoutState.leftCollapsed ? "0px" : `${layoutState.leftWidth}px`);
 	appEl.style.setProperty("--right-track", layoutState.rightCollapsed ? "0px" : `${layoutState.rightWidth}px`);
+	appEl.style.setProperty("--bottom-track", layoutState.bottomCollapsed ? "0px" : `${layoutState.bottomHeight}px`);
 	appEl.classList.toggle("left-collapsed", layoutState.leftCollapsed);
 	appEl.classList.toggle("right-collapsed", layoutState.rightCollapsed);
+	appEl.classList.toggle("bottom-collapsed", layoutState.bottomCollapsed);
 	for (const button of toggleLeftPanelButtons) {
 		button.setAttribute("aria-pressed", String(!layoutState.leftCollapsed));
 	}
 	toggleRightPanelButton.setAttribute("aria-pressed", String(!layoutState.rightCollapsed));
+	toggleBottomPanelButton.setAttribute("aria-pressed", String(!layoutState.bottomCollapsed));
+	bottomPanel.hidden = layoutState.bottomCollapsed;
 }
 
 function syncResponsiveLayout(): void {
@@ -2001,6 +2028,117 @@ for (const button of toggleLeftPanelButtons) {
 
 toggleRightPanelButton.addEventListener("click", () => {
 	togglePanel("right");
+});
+
+// Bottom panel (terminal)
+let term: Terminal | undefined;
+let fitAddon: FitAddon | undefined;
+let terminalDataUnsub: (() => void) | undefined;
+
+function toggleBottomPanel(): void {
+	layoutState.bottomCollapsed = !layoutState.bottomCollapsed;
+	applyLayoutState();
+	saveLayoutState();
+	if (!layoutState.bottomCollapsed) {
+		initTerminal();
+	}
+}
+
+function initTerminal(): void {
+	if (term) {
+		setTimeout(() => fitAddon?.fit(), 0);
+		term.focus();
+		return;
+	}
+	term = new Terminal({
+		fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+		fontSize: 13,
+		lineHeight: 1.35,
+		cursorBlink: true,
+		theme: {
+			background: "#151515",
+			foreground: "#d4d4d4",
+			cursor: "#d4d4d4",
+			selectionBackground: "#264f78",
+		},
+	});
+	fitAddon = new FitAddon();
+	term.loadAddon(fitAddon);
+	term.open(terminalContainer);
+	fitAddon.fit();
+	term.focus();
+
+	term.onData((data) => {
+		window.piDesktop.terminalWrite(data);
+	});
+
+	terminalDataUnsub = window.piDesktop.onTerminalData((data) => {
+		term?.write(data);
+	});
+
+	window.piDesktop.terminalCreate().catch(showError);
+
+	const resizeObserver = new ResizeObserver(() => {
+		if (!layoutState.bottomCollapsed && fitAddon) {
+			fitAddon.fit();
+			if (term) {
+				window.piDesktop.terminalResize(term.cols, term.rows);
+			}
+		}
+	});
+	resizeObserver.observe(terminalContainer);
+}
+
+toggleBottomPanelButton.addEventListener("click", toggleBottomPanel);
+
+document.querySelector<HTMLButtonElement>("#terminal-close")!.addEventListener("click", () => {
+	layoutState.bottomCollapsed = true;
+	applyLayoutState();
+	saveLayoutState();
+});
+
+document.querySelector<HTMLButtonElement>("#terminal-new-tab")!.addEventListener("click", () => {
+	if (term) {
+		terminalDataUnsub?.();
+		term.dispose();
+		term = undefined;
+		fitAddon = undefined;
+		window.piDesktop
+			.terminalDestroy()
+			.then(() => initTerminal())
+			.catch(showError);
+	}
+});
+
+// Bottom panel resize
+bottomResizer.addEventListener("pointerdown", (event) => {
+	event.preventDefault();
+	const startY = event.clientY;
+	const startHeight = layoutState.bottomHeight;
+	bottomResizer.classList.add("dragging");
+	bottomResizer.setPointerCapture(event.pointerId);
+
+	function onMove(e: PointerEvent): void {
+		const delta = startY - e.clientY;
+		layoutState.bottomHeight = clamp(startHeight + delta, 120, 600);
+		applyLayoutState();
+	}
+	function onUp(): void {
+		bottomResizer.classList.remove("dragging");
+		bottomResizer.removeEventListener("pointermove", onMove);
+		bottomResizer.removeEventListener("pointerup", onUp);
+		saveLayoutState();
+	}
+	bottomResizer.addEventListener("pointermove", onMove);
+	bottomResizer.addEventListener("pointerup", onUp);
+});
+
+// Cmd+J shortcut
+document.addEventListener("keydown", (event) => {
+	if ((event.metaKey || event.ctrlKey) && event.key === "j") {
+		event.preventDefault();
+		toggleBottomPanel();
+	}
 });
 
 function toggleComposerMenu(button: HTMLButtonElement, menu: HTMLElement): void {

@@ -1,3 +1,5 @@
+@import "@xterm/xterm/css/xterm.css";
+
 :root {
 	color-scheme: light;
 	font-family:
@@ -209,9 +211,11 @@ button:disabled {
 	display: grid;
 	position: relative;
 	grid-template-columns: var(--left-track) minmax(0, 1fr) var(--right-track);
+	grid-template-rows: minmax(0, 1fr) var(--bottom-track);
 	height: 100vh;
 	min-height: 680px;
 	overflow: hidden;
+	--bottom-track: 0px;
 }
 
 #app.left-collapsed {
@@ -802,8 +806,10 @@ select:focus {
 .main {
 	display: grid;
 	grid-template-rows: auto minmax(0, 1fr) auto;
+	grid-column: 2;
+	grid-row: 1;
 	min-width: 0;
-	height: 100vh;
+	min-height: 0;
 	overflow: hidden;
 	contain: layout paint;
 	background: var(--paper);
@@ -962,6 +968,23 @@ body[data-platform="mac"] .topbar-left-controls {
 	border-color: var(--line-strong);
 }
 
+.chrome-button[aria-pressed="true"]:not([data-left-panel-toggle]) {
+	background: var(--secondary-bg);
+	color: var(--ink);
+}
+
+.left-panel-closed-icon {
+	display: none;
+}
+
+.chrome-button[data-left-panel-toggle][aria-pressed="false"] .left-panel-open-icon {
+	display: none;
+}
+
+.chrome-button[data-left-panel-toggle][aria-pressed="false"] .left-panel-closed-icon {
+	display: block;
+}
+
 .topbar-title {
 	display: flex;
 	align-items: center;
@@ -1036,6 +1059,86 @@ body[data-platform="mac"] .topbar-left-controls {
 #app.left-collapsed .left-resizer,
 #app.right-collapsed .right-resizer {
 	display: none;
+}
+
+/* Bottom panel (terminal) */
+.bottom-panel {
+	grid-column: 2;
+	grid-row: 2;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	background: var(--nav);
+	border-top: 1px solid var(--line);
+	overflow: hidden;
+	position: relative;
+}
+
+.bottom-panel[hidden] {
+	display: none;
+}
+
+.bottom-panel-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 32px;
+	padding: 0 8px 0 14px;
+	background: var(--nav);
+	flex-shrink: 0;
+}
+
+.bottom-panel-title {
+	font-size: 11px;
+	font-weight: 560;
+	color: var(--nav-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	flex: 1;
+}
+
+.terminal-container {
+	flex: 1;
+	min-height: 0;
+	padding: 0 4px 4px;
+}
+
+.bottom-resizer {
+	position: absolute;
+	top: -4px;
+	left: 0;
+	right: 0;
+	height: 8px;
+	cursor: row-resize;
+	z-index: 20;
+	outline: none;
+	touch-action: none;
+}
+
+.bottom-resizer::after {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 3px;
+	height: 1px;
+	background: transparent;
+	content: "";
+	transition: background 120ms ease;
+}
+
+.bottom-resizer:hover::after,
+.bottom-resizer.dragging::after {
+	background: var(--accent);
+}
+
+.sidebar {
+	grid-column: 1;
+	grid-row: 1 / -1;
+}
+
+.inspector {
+	grid-column: 3;
+	grid-row: 1 / -1;
 }
 
 body.resizing-panels {

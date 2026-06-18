@@ -14,7 +14,10 @@
 		"start": "npm run build && electron ."
 	},
 	"dependencies": {
-		"@earendil-works/pi-coding-agent": "^0.79.5"
+		"@earendil-works/pi-coding-agent": "^0.79.5",
+		"@xterm/addon-fit": "0.10.0",
+		"@xterm/xterm": "5.5.0",
+		"node-pty": "1.0.0"
 	},
 	"devDependencies": {
 		"electron": "39.8.10"

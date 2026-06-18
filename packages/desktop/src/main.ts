@@ -16,6 +16,7 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions, shell } from "electron";
+import * as pty from "node-pty";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1501,6 +1502,40 @@ ipcMain.handle("pi:quit", () => {
 ipcMain.handle("pi:git-status", async () => {
 	await ensureDesktopSession();
 	return getGitStatus();
+});
+
+// Terminal (PTY) management
+let ptyProcess: pty.IPty | undefined;
+
+ipcMain.handle("pi:terminal-create", () => {
+	if (ptyProcess) return;
+	const userShell = process.env.SHELL || "/bin/zsh";
+	ptyProcess = pty.spawn(userShell, [], {
+		name: "xterm-256color",
+		cols: 80,
+		rows: 24,
+		cwd: currentCwd,
+		env: process.env as Record<string, string>,
+	});
+	ptyProcess.onData((data) => {
+		send("pi:terminal-data", data);
+	});
+	ptyProcess.onExit(() => {
+		ptyProcess = undefined;
+	});
+});
+
+ipcMain.on("pi:terminal-write", (_event, data: string) => {
+	ptyProcess?.write(data);
+});
+
+ipcMain.on("pi:terminal-resize", (_event, cols: number, rows: number) => {
+	ptyProcess?.resize(cols, rows);
+});
+
+ipcMain.handle("pi:terminal-destroy", () => {
+	ptyProcess?.kill();
+	ptyProcess = undefined;
 });
 
 app.whenReady().then(async () => {
