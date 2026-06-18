@@ -329,37 +329,42 @@ body[data-platform="mac"] .sidebar-control-hit-area {
 }
 
 .sidebar-settings {
+	position: relative;
 	flex: 0 0 auto;
 	margin-top: 2px;
+	padding-top: 10px;
 	border-top: 1px solid var(--nav-control-border);
 	color: var(--nav-text);
 }
 
-.sidebar-settings summary {
+.sidebar-settings-trigger {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	height: 42px;
-	padding: 0 10px;
+	width: 100%;
+	height: 40px;
+	min-height: 40px;
+	padding: 0 8px;
+	border: 1px solid transparent;
 	border-radius: 9px;
-	cursor: pointer;
-	list-style: none;
+	background: transparent;
 	color: var(--nav-text);
-	font-size: 15px;
-	font-weight: 560;
+	font-size: 14px;
+	font-weight: 620;
+	text-align: left;
+	box-shadow: none;
 }
 
-.sidebar-settings summary::-webkit-details-marker {
-	display: none;
+.sidebar-settings-trigger:hover,
+.sidebar-settings-trigger:focus-visible,
+.sidebar-settings-trigger[aria-expanded="true"] {
+	background: color-mix(in srgb, var(--nav-control-bg) 80%, transparent);
+	border-color: var(--nav-control-border);
 }
 
-.sidebar-settings summary:hover {
-	background: var(--nav-control-bg);
-}
-
-.sidebar-settings[open] summary {
-	margin-top: 8px;
-	background: var(--nav-control-bg);
+.sidebar-settings-trigger > span:not(.button-icon):not(.settings-caret) {
+	flex: 1;
+	min-width: 0;
 }
 
 .button-icon {
@@ -370,6 +375,138 @@ body[data-platform="mac"] .sidebar-control-hit-area {
 	border-radius: 6px;
 	color: var(--nav-muted);
 	font-size: 16px;
+}
+
+.settings-caret {
+	width: 8px;
+	height: 8px;
+	margin-right: 4px;
+	border-right: 2px solid currentColor;
+	border-bottom: 2px solid currentColor;
+	opacity: 0.64;
+	transform: rotate(-135deg);
+}
+
+.sidebar-settings-popover {
+	position: absolute;
+	left: 0;
+	bottom: calc(100% + 10px);
+	z-index: 70;
+	display: grid;
+	gap: 10px;
+	width: min(310px, calc(100vw - 24px));
+	max-height: min(520px, calc(100vh - 92px));
+	padding: 10px;
+	border: 1px solid var(--nav-control-border);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--nav) 94%, var(--paper));
+	box-shadow:
+		0 26px 70px rgba(0, 0, 0, 0.34),
+		0 1px 0 color-mix(in srgb, white 8%, transparent) inset;
+	overflow: auto;
+	backdrop-filter: blur(18px);
+}
+
+.sidebar-settings-popover[hidden] {
+	display: none;
+}
+
+.settings-popover-section {
+	display: grid;
+	gap: 6px;
+}
+
+.settings-popover-section + .settings-popover-section {
+	padding-top: 10px;
+	border-top: 1px solid var(--nav-control-border);
+}
+
+.settings-popover-heading {
+	color: var(--nav-muted);
+	font-size: 11px;
+	font-weight: 680;
+	text-transform: uppercase;
+	letter-spacing: 0;
+}
+
+.sidebar-settings-popover .field {
+	gap: 4px;
+	color: var(--nav-muted);
+	font-size: 12px;
+}
+
+.sidebar-settings-popover input,
+.sidebar-settings-popover select {
+	height: 32px;
+	min-height: 32px;
+	padding: 0 9px;
+	border-radius: 8px;
+	font-size: 13px;
+	font-weight: 520;
+}
+
+.sidebar-settings-popover .button-row {
+	gap: 0;
+}
+
+.sidebar-settings-popover .button-row button {
+	height: 32px;
+	min-height: 32px;
+	padding: 0 10px;
+	border-radius: 8px;
+	background: var(--nav-control-bg);
+	border-color: var(--nav-control-border);
+	color: var(--nav-text);
+	font-size: 13px;
+	font-weight: 620;
+}
+
+.sidebar-settings-popover .meta {
+	font-size: 11px;
+	line-height: 1.35;
+	color: var(--nav-muted);
+}
+
+.settings-popover-actions button {
+	display: grid;
+	grid-template-columns: 22px minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: 32px;
+	padding: 5px 8px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--nav-text);
+	font-size: 13px;
+	font-weight: 620;
+	text-align: left;
+	box-shadow: none;
+}
+
+.settings-popover-actions button:hover,
+.settings-popover-actions button:focus-visible {
+	background: var(--nav-control-bg);
+	border-color: var(--nav-control-border);
+}
+
+.settings-action-icon {
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	color: var(--nav-muted);
+}
+
+.settings-action-icon svg {
+	width: 17px;
+	height: 17px;
+	fill: none;
+	stroke: currentColor;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 2;
 }
 
 .button-icon svg,

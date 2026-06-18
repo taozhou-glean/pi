@@ -60,6 +60,11 @@ type GitStatus = {
 	error?: string;
 };
 
+type DesktopLogoutResult = {
+	state: DesktopState;
+	message: string;
+};
+
 type ComposerImageAttachment = {
 	id: string;
 	data: string;
@@ -96,6 +101,7 @@ type PiDesktopApi = {
 	compact(customInstructions?: string): Promise<DesktopState>;
 	setSessionName(name: string): Promise<DesktopState>;
 	reloadSession(): Promise<DesktopState>;
+	logout(): Promise<DesktopLogoutResult>;
 	quit(): Promise<void>;
 	gitStatus(): Promise<GitStatus>;
 	onState(handler: (state: DesktopState) => void): () => void;
@@ -121,13 +127,16 @@ const cwdInput = document.querySelector<HTMLInputElement>("#cwd-input")!;
 const changeCwdButton = document.querySelector<HTMLButtonElement>("#change-cwd")!;
 const newSessionButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-new-session]"));
 const appEl = document.querySelector<HTMLDivElement>("#app")!;
-const sidebarSettings = document.querySelector<HTMLDetailsElement>(".sidebar-settings")!;
-const sidebarSettingsSummary = sidebarSettings.querySelector<HTMLElement>("summary")!;
+const sidebarSettings = document.querySelector<HTMLDivElement>(".sidebar-settings")!;
+const sidebarSettingsTrigger = document.querySelector<HTMLButtonElement>("#sidebar-settings-trigger")!;
+const sidebarSettingsPopover = document.querySelector<HTMLDivElement>("#sidebar-settings-popover")!;
 const toggleLeftPanelButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-left-panel-toggle]"));
 const toggleRightPanelButton = document.querySelector<HTMLButtonElement>("#toggle-right-panel")!;
 const leftResizer = document.querySelector<HTMLDivElement>("#left-resizer")!;
 const rightResizer = document.querySelector<HTMLDivElement>("#right-resizer")!;
 const refreshSessionsButton = document.querySelector<HTMLButtonElement>("#refresh-sessions")!;
+const settingsRefreshSessionsButton = document.querySelector<HTMLButtonElement>("#settings-refresh-sessions")!;
+const settingsLogoutButton = document.querySelector<HTMLButtonElement>("#settings-logout")!;
 const sessionList = document.querySelector<HTMLDivElement>("#session-list")!;
 const modelSelect = document.querySelector<HTMLSelectElement>("#model-select")!;
 const modelMeta = document.querySelector<HTMLDivElement>("#model-meta")!;
@@ -351,6 +360,19 @@ function closeComposerMenus(): void {
 	setMenuOpen(composerAddButton, composerAddMenu, false);
 	setMenuOpen(composerModelButton, composerModelMenu, false);
 	closeSlashCommandMenu();
+}
+
+function setSettingsPopoverOpen(open: boolean): void {
+	sidebarSettingsPopover.hidden = !open;
+	sidebarSettingsTrigger.setAttribute("aria-expanded", String(open));
+}
+
+function closeSettingsPopover(): void {
+	setSettingsPopoverOpen(false);
+}
+
+function toggleSettingsPopover(): void {
+	setSettingsPopoverOpen(sidebarSettingsPopover.hidden);
 }
 
 function syncComposerModelSelection(): void {
@@ -1888,9 +1910,11 @@ themeMedia.addEventListener("change", () => {
 
 window.addEventListener("resize", syncResponsiveLayout);
 
-sidebarSettingsSummary.addEventListener("click", (event) => {
+sidebarSettingsTrigger.addEventListener("click", (event) => {
 	event.preventDefault();
-	sidebarSettings.open = !sidebarSettings.open;
+	event.stopPropagation();
+	closeComposerMenus();
+	toggleSettingsPopover();
 });
 
 for (const button of toggleLeftPanelButtons) {
@@ -1958,17 +1982,20 @@ document.addEventListener("click", (event) => {
 		(composerAddButton.contains(event.target) ||
 			composerAddMenu.contains(event.target) ||
 			composerModelButton.contains(event.target) ||
-			composerModelMenu.contains(event.target))
+			composerModelMenu.contains(event.target) ||
+			sidebarSettings.contains(event.target))
 	) {
 		return;
 	}
 	closeComposerMenus();
+	closeSettingsPopover();
 });
 
 document.addEventListener("keydown", (event) => {
 	if (event.key === "Escape") {
 		closeImagePreview();
 		closeComposerMenus();
+		closeSettingsPopover();
 		promptInput.focus();
 	}
 });
@@ -1997,6 +2024,22 @@ refreshGitButton.addEventListener("click", () => {
 
 refreshSessionsButton.addEventListener("click", () => {
 	refreshSessions().catch(showError);
+});
+
+settingsRefreshSessionsButton.addEventListener("click", () => {
+	refreshSessions().catch(showError);
+});
+
+settingsLogoutButton.addEventListener("click", async () => {
+	try {
+		closeSettingsPopover();
+		const result = await window.piDesktop.logout();
+		renderState(result.state);
+		await refreshModels();
+		showDesktopMessage("Logout", result.message);
+	} catch (error) {
+		showError(error);
+	}
 });
 
 window.piDesktop.onState(renderState);

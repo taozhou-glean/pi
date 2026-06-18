@@ -622,13 +622,44 @@ async function createWindow(): Promise<void> {
 							throw new Error("Model menu filter did not narrow results to matching models");
 						}
 						modelButton.click();
-					const settingsDetails = document.querySelector(".sidebar-settings");
-					const settingsSummary = settingsDetails.querySelector("summary");
-					const beforeSettingsOpen = settingsDetails.open;
-					settingsSummary.click();
+					const settingsTrigger = document.querySelector("#sidebar-settings-trigger");
+					const settingsPopover = document.querySelector("#sidebar-settings-popover");
+					const beforeSettingsOpen = settingsPopover.hidden === false;
+					settingsTrigger.click();
 					await new Promise((resolve) => setTimeout(resolve, 0));
-					const afterSettingsOpen = settingsDetails.open;
-					settingsSummary.click();
+					const afterSettingsOpen = settingsPopover.hidden === false;
+					const settingsExpandedState = settingsTrigger.getAttribute("aria-expanded");
+					const settingsPopoverHasControls =
+						settingsPopover.querySelector("#cwd-input") !== null &&
+						settingsPopover.querySelector("#model-select") !== null &&
+						settingsPopover.querySelector("#theme-select") !== null &&
+						settingsPopover.querySelector("#settings-refresh-sessions") !== null &&
+						settingsPopover.querySelector("#settings-logout") !== null;
+					const settingsLogoutText = settingsPopover.querySelector("#settings-logout")?.textContent?.trim();
+					const settingsTriggerRect = rect(settingsTrigger);
+					const settingsPopoverRect = rect(settingsPopover);
+					const settingsInputRect = rect(settingsPopover.querySelector("#cwd-input"));
+					const settingsActionRect = rect(settingsPopover.querySelector("#settings-refresh-sessions"));
+					const settingsPopoverFloatsAbove = settingsPopoverRect.bottom <= settingsTriggerRect.top - 4;
+					const settingsPopoverCompact = settingsPopoverRect.right - settingsPopoverRect.left <= 320;
+					const settingsControlsCompact =
+						settingsInputRect.bottom - settingsInputRect.top <= 36 &&
+						settingsActionRect.bottom - settingsActionRect.top <= 36;
+					document.body.click();
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					const settingsClosedOnOutsideClick = settingsPopover.hidden === true;
+					if (
+						!afterSettingsOpen ||
+						settingsExpandedState !== "true" ||
+						!settingsPopoverHasControls ||
+						settingsLogoutText !== "Logout" ||
+						!settingsPopoverFloatsAbove ||
+						!settingsPopoverCompact ||
+						!settingsControlsCompact ||
+						!settingsClosedOnOutsideClick
+					) {
+						throw new Error("Settings popover did not behave as expected");
+					}
 					leftToggle.focus();
 					await new Promise((resolve) => setTimeout(resolve, 0));
 					const focusedControlShadow = getComputedStyle(leftToggle).boxShadow;
@@ -1082,6 +1113,13 @@ async function createWindow(): Promise<void> {
 										titleCollapsedRect,
 										defaultRightCollapsed,
 											settingsToggleChanged: beforeSettingsOpen !== afterSettingsOpen,
+											settingsExpandedState,
+											settingsPopoverHasControls,
+											settingsLogoutText,
+											settingsPopoverFloatsAbove,
+											settingsPopoverCompact,
+											settingsControlsCompact,
+											settingsClosedOnOutsideClick,
 										noStaticSessionMergeIcon,
 												addMenuOpened,
 												addMenuCommandCount,
@@ -1309,6 +1347,18 @@ ipcMain.handle("pi:reload-session", async () => {
 	await ensureDesktopSession();
 	await getSession().reload();
 	return serializeState();
+});
+ipcMain.handle("pi:logout", async () => {
+	await ensureDesktopSession();
+	const session = getSession();
+	const provider = session.model?.provider;
+	if (!provider) throw new Error("No model provider is selected.");
+	session.modelRegistry.authStorage.logout(provider);
+	session.modelRegistry.refresh();
+	return {
+		state: serializeState(),
+		message: `Logged out of ${provider}. Environment variables and models.json config are unchanged.`,
+	};
 });
 ipcMain.handle("pi:quit", () => {
 	app.quit();
