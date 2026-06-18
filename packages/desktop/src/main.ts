@@ -103,6 +103,7 @@ let currentSessionDir: string | undefined;
 const providerAllowlist = ["glean"];
 const envSessionDir = "PI_CODING_AGENT_SESSION_DIR";
 let isQuitting = false;
+let pendingSessionSnapshot: NodeJS.Timeout | undefined;
 
 function getSession(): AgentSession {
 	if (!current?.session) {
@@ -372,10 +373,34 @@ function publishState(): void {
 	send("pi:state", serializeState());
 }
 
+function publishSessionSnapshot(): void {
+	send("pi:messages", serializeVisibleMessages());
+	publishState();
+}
+
+function scheduleSessionSnapshot(): void {
+	if (pendingSessionSnapshot) return;
+	pendingSessionSnapshot = setTimeout(() => {
+		pendingSessionSnapshot = undefined;
+		publishSessionSnapshot();
+	}, 50);
+}
+
+function flushSessionSnapshot(): void {
+	if (pendingSessionSnapshot) {
+		clearTimeout(pendingSessionSnapshot);
+		pendingSessionSnapshot = undefined;
+	}
+	publishSessionSnapshot();
+}
+
 function handleSessionEvent(event: AgentSessionEvent): void {
 	send("pi:event", event);
+	if (event.type === "message_update" || event.type === "tool_execution_update") {
+		scheduleSessionSnapshot();
+		return;
+	}
 	if (
-		event.type === "message_update" ||
 		event.type === "message_end" ||
 		event.type === "agent_end" ||
 		event.type === "agent_start" ||
@@ -383,12 +408,10 @@ function handleSessionEvent(event: AgentSessionEvent): void {
 		event.type === "thinking_level_changed" ||
 		event.type === "session_info_changed" ||
 		event.type === "tool_execution_start" ||
-		event.type === "tool_execution_update" ||
 		event.type === "tool_execution_end" ||
 		event.type === "compaction_end"
 	) {
-		send("pi:messages", serializeVisibleMessages());
-		publishState();
+		flushSessionSnapshot();
 	}
 }
 
@@ -446,8 +469,7 @@ async function createDesktopSessionInner(
 		sessionStartEvent: { type: "session_start", reason: "startup" },
 	});
 	unsubscribeSession = current.session.subscribe(handleSessionEvent);
-	send("pi:messages", serializeVisibleMessages());
-	publishState();
+	flushSessionSnapshot();
 	return serializeState();
 }
 
@@ -1560,6 +1582,10 @@ app.on("activate", async () => {
 
 app.on("before-quit", () => {
 	isQuitting = true;
+	if (pendingSessionSnapshot) {
+		clearTimeout(pendingSessionSnapshot);
+		pendingSessionSnapshot = undefined;
+	}
 	unsubscribeSession?.();
 	current?.session.dispose();
 	for (const services of servicesByCwd.values()) {

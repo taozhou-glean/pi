@@ -1285,6 +1285,7 @@ window.__piDesktopTest = {
 };
 
 function renderState(next: DesktopState): void {
+	const previous = state;
 	state = next;
 	const requiresAuth = next.authRequired;
 	appEl.classList.toggle("auth-required", requiresAuth);
@@ -1315,7 +1316,9 @@ function renderState(next: DesktopState): void {
 		modelSelect.value = selectedValue;
 	}
 	syncComposerModelSelection();
-	renderSessionList();
+	if (!previous || previous.sessionId !== next.sessionId || previous.cwd !== next.cwd) {
+		renderSessionList();
+	}
 }
 
 function updateSessionTitle(): void {
