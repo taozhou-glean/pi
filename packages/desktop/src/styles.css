@@ -795,8 +795,26 @@ select:focus {
 	background: var(--paper);
 }
 
+#app.auth-required {
+	grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+#app.auth-required .sidebar,
+#app.auth-required .inspector,
+#app.auth-required .topbar,
+#app.auth-required .status-strip,
+#app.auth-required .topbar-left-controls,
+#app.auth-required .actions {
+	display: none;
+}
+
+#app.auth-required .main {
+	grid-column: 2;
+	grid-template-rows: minmax(0, 1fr);
+}
+
 .login-screen {
-	grid-row: 2;
+	grid-row: 1;
 	display: grid;
 	place-items: center;
 	min-height: 0;

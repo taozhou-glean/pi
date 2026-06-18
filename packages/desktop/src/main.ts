@@ -548,13 +548,20 @@ async function createWindow(): Promise<void> {
 						const authRequiredClassApplied = document.querySelector("#app")?.classList.contains("auth-required") === true;
 						const composerDisplayForLogin = getComputedStyle(document.querySelector("#composer")).display;
 						const messagesDisplayForLogin = getComputedStyle(document.querySelector("#messages")).display;
+						const sidebarDisplayForLogin = getComputedStyle(document.querySelector(".sidebar")).display;
+						const inspectorDisplayForLogin = getComputedStyle(document.querySelector(".inspector")).display;
+						const topbarDisplayForLogin = getComputedStyle(document.querySelector(".topbar")).display;
 						const loginPanelRect = document.querySelector(".login-panel").getBoundingClientRect();
 						const mainVisibleRect = document.querySelector(".main").getBoundingClientRect();
+						const appVisibleRect = document.querySelector("#app").getBoundingClientRect();
 						const loginPanelVisible =
 							loginPanelRect.top >= mainVisibleRect.top &&
 							loginPanelRect.bottom <= mainVisibleRect.bottom &&
 							loginPanelRect.left >= mainVisibleRect.left &&
 							loginPanelRect.right <= mainVisibleRect.right;
+						const loginUsesFullWindow =
+							Math.abs(mainVisibleRect.left - appVisibleRect.left) <= 1 &&
+							Math.abs(mainVisibleRect.right - appVisibleRect.right) <= 1;
 						const smokeState = {
 							...state,
 							model: state.model ?? { provider: "glean", id: "smoke-model" },
@@ -571,6 +578,10 @@ async function createWindow(): Promise<void> {
 							!authRequiredClassApplied ||
 							composerDisplayForLogin !== "none" ||
 							messagesDisplayForLogin !== "none" ||
+							sidebarDisplayForLogin !== "none" ||
+							inspectorDisplayForLogin !== "none" ||
+							topbarDisplayForLogin !== "none" ||
+							!loginUsesFullWindow ||
 							!loginPanelVisible
 						) {
 							throw new Error("Login screen did not render for unauthenticated state");
@@ -1140,6 +1151,10 @@ async function createWindow(): Promise<void> {
 							authRequiredClassApplied,
 							composerDisplayForLogin,
 							messagesDisplayForLogin,
+							sidebarDisplayForLogin,
+							inspectorDisplayForLogin,
+							topbarDisplayForLogin,
+							loginUsesFullWindow,
 							loginPanelVisible,
 					modelText: document.querySelector("#composer-model")?.textContent,
 					userMessageText,
