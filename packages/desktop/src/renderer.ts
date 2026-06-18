@@ -1497,7 +1497,11 @@ async function refreshAfterSessionChange(): Promise<void> {
 }
 
 async function switchToSession(sessionPath: string): Promise<void> {
-	if (switchingSessionPath || sessionPath === state?.sessionFile) return;
+	if (switchingSessionPath) return;
+	if (sessionPath === state?.sessionFile) {
+		promptInput.focus();
+		return;
+	}
 	switchingSessionPath = sessionPath;
 	messagesEl.classList.add("loading-session");
 	renderSessionList();
@@ -1507,6 +1511,7 @@ async function switchToSession(sessionPath: string): Promise<void> {
 		renderSessionList();
 		renderMessages(await window.piDesktop.getMessages());
 		messagesEl.classList.remove("loading-session");
+		promptInput.focus();
 		refreshModels().catch(showError);
 		refreshGit().catch(showError);
 	} finally {

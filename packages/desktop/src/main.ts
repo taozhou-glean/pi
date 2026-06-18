@@ -1376,12 +1376,16 @@ ipcMain.handle("pi:prompt", async (_event, payload: unknown) => {
 		images: prompt.images,
 		streamingBehavior: getSession().isStreaming ? "followUp" : undefined,
 	});
-	return serializeState();
+	const next = serializeState();
+	send("pi:state", next);
+	return next;
 });
 ipcMain.handle("pi:abort", async () => {
 	await ensureDesktopSession();
 	await getSession().abort();
-	return serializeState();
+	const next = serializeState();
+	send("pi:state", next);
+	return next;
 });
 ipcMain.handle("pi:choose-context", async (_event, kind: "files" | "folder" | "workspace") => {
 	await ensureDesktopSession();
