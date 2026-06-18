@@ -650,7 +650,14 @@ async function createWindow(): Promise<void> {
 					{
 						role: "user",
 						text: "Show markdown",
-						content: [{ type: "text", text: "Show markdown" }],
+						content: [
+							{ type: "text", text: "Show markdown" },
+							{
+								type: "image",
+								data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+								mimeType: "image/png",
+							},
+						],
 						timestamp: Date.now(),
 					},
 					{
@@ -790,6 +797,97 @@ async function createWindow(): Promise<void> {
 							const responsiveAutoCollapsed = app.classList.contains("left-collapsed");
 							Object.defineProperty(window, "innerWidth", { value: originalInnerWidth, configurable: true });
 							window.dispatchEvent(new Event("resize"));
+							const userMessageText = document.querySelector(".message.user .message-body")?.textContent;
+							const markdownHeading = document.querySelector(
+								".message.assistant .markdown h3, .message.assistant .markdown h4, .message.assistant .markdown h5",
+							)?.textContent;
+							const markdownCode = document.querySelector(".message.assistant .markdown pre code")?.textContent;
+							const markdownTableHeader = document.querySelector(".message.assistant .markdown table th")?.textContent;
+							const markdownTableCell = document.querySelector(
+								".message.assistant .markdown table tbody tr:nth-child(2) td:nth-child(2)",
+							)?.textContent;
+							const markdownTableRowCount = document.querySelectorAll(".message.assistant .markdown table tbody tr").length;
+							const markdownTableRendered = document.querySelector(".message.assistant .markdown table") !== null;
+							const markdownHorizontalRuleRendered = document.querySelector(".message.assistant .markdown hr") !== null;
+							const thinkingHidden =
+								document.querySelector("#messages")?.textContent?.includes("Hidden reasoning should not render") === false;
+							const toolGroupText = document.querySelector(".tool-group summary")?.textContent;
+							const toolGroupCollapsed = document.querySelector(".tool-group")?.open === false;
+							const toolResultHiddenAsMessage = document.querySelector(".message.toolResult") === null;
+							const noStaticSessionMergeIcon = document.querySelector(".session-item-icon") === null;
+							const renderedAttachmentCount = document.querySelectorAll(".message.user .message-image-tile").length;
+							const userBubbleExcludesImage = document.querySelector(".message.user .message-user-bubble img") === null;
+							document.querySelector(".message.user .message-image-tile")?.click();
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							const renderedAttachmentPreviewOpened =
+								document.querySelector(".image-preview-overlay")?.hidden === false &&
+								document.querySelector(".image-preview-dialog img") !== null;
+							document.querySelector(".image-preview-close")?.click();
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							if (renderedAttachmentCount !== 1 || !userBubbleExcludesImage || !renderedAttachmentPreviewOpened) {
+								throw new Error("Rendered user image attachment did not match expected tile behavior");
+							}
+							const overflowMessages = Array.from({ length: 48 }, (_, index) => ({
+								role: index % 2 === 0 ? "user" : "assistant",
+								text: \`Scroll test \${index}\\n\\nLine one\\n\\nLine two\\n\\nLine three\`,
+								content: [{ type: "text", text: \`Scroll test \${index}\\n\\nLine one\\n\\nLine two\\n\\nLine three\` }],
+								timestamp: Date.now() + index,
+							}));
+							const messagePane = document.querySelector("#messages");
+							const isAtMessageBottom = () => messagePane.scrollHeight - messagePane.scrollTop - messagePane.clientHeight <= 32;
+							window.__piDesktopTest.renderMessages(overflowMessages);
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							messagePane.scrollTop = messagePane.scrollHeight;
+							messagePane.dispatchEvent(new Event("scroll"));
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							window.__piDesktopTest.renderMessages([
+								...overflowMessages,
+								{
+									role: "assistant",
+									text: "Streaming bottom update",
+									content: [{ type: "text", text: "Streaming bottom update\\n\\nStill following." }],
+									timestamp: Date.now(),
+								},
+							]);
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							const autoFollowStayedAtBottom = isAtMessageBottom();
+							messagePane.scrollTop = Math.max(0, messagePane.scrollHeight - messagePane.clientHeight - 220);
+							messagePane.dispatchEvent(new Event("scroll"));
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							const scrolledUpTop = messagePane.scrollTop;
+							window.__piDesktopTest.renderMessages([
+								...overflowMessages,
+								{
+									role: "assistant",
+									text: "Streaming scrolled-up update\\n\\nMore content\\n\\nMore content\\n\\nMore content",
+									content: [
+										{
+											type: "text",
+											text: "Streaming scrolled-up update\\n\\nMore content\\n\\nMore content\\n\\nMore content",
+										},
+									],
+									timestamp: Date.now(),
+								},
+							]);
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							const scrollHeldWhileStreaming = Math.abs(messagePane.scrollTop - scrolledUpTop) <= 1;
+							messagePane.scrollTop = messagePane.scrollHeight;
+							messagePane.dispatchEvent(new Event("scroll"));
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							window.__piDesktopTest.renderMessages([
+								...overflowMessages,
+								{
+									role: "assistant",
+									text: "Streaming resumed update",
+									content: [{ type: "text", text: "Streaming resumed update\\n\\nBack at the bottom." }],
+									timestamp: Date.now(),
+								},
+							]);
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							const autoFollowResumedAtBottom = isAtMessageBottom();
+							if (!autoFollowStayedAtBottom || !scrollHeldWhileStreaming || !autoFollowResumedAtBottom) {
+								throw new Error("Streaming message scroll follow behavior did not match expectations");
+							}
 							return {
 						title: document.querySelector("#session-title")?.textContent,
 						documentTitle: document.title,
@@ -803,21 +901,24 @@ async function createWindow(): Promise<void> {
 							paginationCount,
 							projectsNeedingPagination,
 					modelText: document.querySelector("#composer-model")?.textContent,
-					userMessageText: document.querySelector(".message.user .message-body")?.textContent,
+					userMessageText,
 					userMessageMetaHidden: userMessageMetaOpacity === "0",
 					userMessageModelText,
 					userMessageHasHeader,
-					markdownHeading: document.querySelector(".message.assistant .markdown h3, .message.assistant .markdown h4, .message.assistant .markdown h5")?.textContent,
-					markdownCode: document.querySelector(".message.assistant .markdown pre code")?.textContent,
-					markdownTableHeader: document.querySelector(".message.assistant .markdown table th")?.textContent,
-					markdownTableCell: document.querySelector(".message.assistant .markdown table tbody tr:nth-child(2) td:nth-child(2)")?.textContent,
-					markdownTableRowCount: document.querySelectorAll(".message.assistant .markdown table tbody tr").length,
-					markdownTableRendered: document.querySelector(".message.assistant .markdown table") !== null,
-					markdownHorizontalRuleRendered: document.querySelector(".message.assistant .markdown hr") !== null,
-					thinkingHidden: document.querySelector("#messages")?.textContent?.includes("Hidden reasoning should not render") === false,
-					toolGroupText: document.querySelector(".tool-group summary")?.textContent,
-					toolGroupCollapsed: document.querySelector(".tool-group")?.open === false,
-					toolResultHiddenAsMessage: document.querySelector(".message.toolResult") === null,
+					markdownHeading,
+					markdownCode,
+					markdownTableHeader,
+					markdownTableCell,
+					markdownTableRowCount,
+					markdownTableRendered,
+					markdownHorizontalRuleRendered,
+					thinkingHidden,
+					toolGroupText,
+						toolGroupCollapsed,
+						toolResultHiddenAsMessage,
+						renderedAttachmentCount,
+						userBubbleExcludesImage,
+						renderedAttachmentPreviewOpened,
 					gitBranch: git.branch,
 						gitIsRepo: git.isRepo,
 						resizeChanged: beforeGrid !== afterGrid,
@@ -834,7 +935,7 @@ async function createWindow(): Promise<void> {
 										titleCollapsedRect,
 										defaultRightCollapsed,
 											settingsToggleChanged: beforeSettingsOpen !== afterSettingsOpen,
-										noStaticSessionMergeIcon: document.querySelector(".session-item-icon") === null,
+										noStaticSessionMergeIcon,
 												addMenuOpened,
 												addMenuCommandCount,
 												addMenuSwitchCount,
@@ -887,6 +988,9 @@ async function createWindow(): Promise<void> {
 						pastedAttachmentRemoved,
 						errorHasFrame: errorStyle.borderTopStyle !== "none" && errorStyle.paddingTop !== "0px",
 						contextRowsAreFlat: contextRowStyle.borderLeftStyle === "none" && contextRowStyle.backgroundColor === "rgba(0, 0, 0, 0)",
+						autoFollowStayedAtBottom,
+						scrollHeldWhileStreaming,
+						autoFollowResumedAtBottom,
 						responsiveBeforeCollapsed,
 						responsiveAutoCollapsed,
 						beforeGrid,

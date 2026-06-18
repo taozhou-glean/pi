@@ -151,6 +151,7 @@ let composerImages: ComposerImageAttachment[] = [];
 let switchingSessionPath: string | undefined;
 let renderedSessionId: string | undefined;
 let visibleMessageLimit = 120;
+let shouldFollowMessages = true;
 const messagePageSize = 120;
 const projectSessionPageSize = 5;
 const projectSessionLimits = new Map<string, number>();
@@ -372,6 +373,15 @@ function formatRelative(value: string): string {
 	const deltaDays = Math.round(deltaHours / 24);
 	if (deltaDays < 7) return `${deltaDays}d ago`;
 	return date.toLocaleDateString();
+}
+
+function isMessagesScrolledToBottom(): boolean {
+	return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 32;
+}
+
+function scrollMessagesToBottom(): void {
+	messagesEl.scrollTop = messagesEl.scrollHeight;
+	shouldFollowMessages = true;
 }
 
 function setBusy(isBusy: boolean): void {
@@ -613,11 +623,13 @@ function hasVisibleContent(message: DesktopMessage): boolean {
 	);
 }
 
-function renderContent(message: DesktopMessage): HTMLElement {
+function renderContent(message: DesktopMessage, options: { includeImages?: boolean } = {}): HTMLElement {
+	const includeImages = options.includeImages ?? true;
 	const body = document.createElement("div");
 	body.className = "message-body markdown";
 	const text = contentText(message);
 	if (text) renderMarkdown(body, text);
+	if (!includeImages) return body;
 	for (const block of message.content) {
 		if (block.type !== "image") continue;
 		const image = document.createElement("img");
@@ -627,6 +639,36 @@ function renderContent(message: DesktopMessage): HTMLElement {
 		body.append(image);
 	}
 	return body;
+}
+
+function openImagePreviewSource(name: string, src: string): void {
+	openImagePreview({ id: src, data: "", mimeType: "image/png", name, objectUrl: src });
+}
+
+function renderImageAttachments(message: DesktopMessage): HTMLElement | undefined {
+	const images = message.content.filter(
+		(block): block is Extract<DesktopContent, { type: "image" }> => block.type === "image",
+	);
+	if (images.length === 0) return undefined;
+
+	const strip = document.createElement("div");
+	strip.className = "message-attachments";
+	for (const [index, block] of images.entries()) {
+		const src = `data:${block.mimeType};base64,${block.data}`;
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "message-image-tile";
+		button.title = "Preview attached image";
+		button.setAttribute("aria-label", `Preview attached image ${index + 1}`);
+		button.addEventListener("click", () => openImagePreviewSource(`Attached image ${index + 1}`, src));
+
+		const image = document.createElement("img");
+		image.src = src;
+		image.alt = "Attached image";
+		button.append(image);
+		strip.append(button);
+	}
+	return strip;
 }
 
 function renderToolInput(input: unknown): string {
@@ -644,6 +686,10 @@ function createMessage(message: DesktopMessage): HTMLElement {
 	row.className = `message ${message.role}`;
 
 	if (message.role === "user") {
+		row.classList.toggle(
+			"has-attachments",
+			message.content.some((block) => block.type === "image"),
+		);
 		const meta = document.createElement("div");
 		meta.className = "message-hover-meta";
 		if (state?.model) {
@@ -658,7 +704,20 @@ function createMessage(message: DesktopMessage): HTMLElement {
 			? new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 			: "";
 		meta.append(time);
-		row.append(renderContent(message), meta);
+		const bubble = document.createElement("div");
+		bubble.className = "message-user-bubble";
+		const body = renderContent(message, { includeImages: false });
+		if (body.hasChildNodes()) {
+			bubble.append(body);
+		}
+		const attachments = renderImageAttachments(message);
+		if (attachments) {
+			row.append(attachments);
+		}
+		if (bubble.hasChildNodes()) {
+			row.append(bubble);
+		}
+		row.append(meta);
 		return row;
 	}
 
@@ -710,10 +769,14 @@ function createToolGroup(call: DesktopToolCall, result: DesktopMessage | undefin
 }
 
 function renderMessages(messages: DesktopMessage[]): void {
+	const sessionChanged = renderedSessionId !== state?.sessionId;
+	const followAfterRender = sessionChanged || shouldFollowMessages || isMessagesScrolledToBottom();
+	const previousScrollTop = messagesEl.scrollTop;
 	messagesEl.innerHTML = "";
-	if (renderedSessionId !== state?.sessionId) {
+	if (sessionChanged) {
 		renderedSessionId = state?.sessionId;
 		visibleMessageLimit = messagePageSize;
+		shouldFollowMessages = true;
 	}
 	if (messages.length === 0) {
 		const empty = document.createElement("div");
@@ -759,7 +822,14 @@ function renderMessages(messages: DesktopMessage[]): void {
 		}
 		messagesEl.append(row);
 	}
-	messagesEl.scrollTop = messagesEl.scrollHeight;
+	if (followAfterRender) {
+		scrollMessagesToBottom();
+	} else {
+		messagesEl.scrollTop = Math.min(
+			previousScrollTop,
+			Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight),
+		);
+	}
 }
 
 window.__piDesktopTest = {
@@ -1289,6 +1359,10 @@ promptInput.addEventListener("paste", (event) => {
 	if (files.length === 0) return;
 	event.preventDefault();
 	addComposerImageFiles(files).catch(showError);
+});
+
+messagesEl.addEventListener("scroll", () => {
+	shouldFollowMessages = isMessagesScrolledToBottom();
 });
 
 imagePreviewOverlay.addEventListener("click", (event) => {
