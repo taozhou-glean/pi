@@ -545,6 +545,13 @@ async function createWindow(): Promise<void> {
 						const loginButtonText = document.querySelector("#login-button")?.textContent;
 						const composerHiddenForLogin = document.querySelector("#composer")?.hidden === true;
 						const messagesHiddenForLogin = document.querySelector("#messages")?.hidden === true;
+						const loginPanelRect = document.querySelector(".login-panel").getBoundingClientRect();
+						const mainVisibleRect = document.querySelector(".main").getBoundingClientRect();
+						const loginPanelVisible =
+							loginPanelRect.top >= mainVisibleRect.top &&
+							loginPanelRect.bottom <= mainVisibleRect.bottom &&
+							loginPanelRect.left >= mainVisibleRect.left &&
+							loginPanelRect.right <= mainVisibleRect.right;
 						const smokeState = {
 							...state,
 							model: state.model ?? { provider: "glean", id: "smoke-model" },
@@ -553,7 +560,13 @@ async function createWindow(): Promise<void> {
 						};
 						window.__piDesktopTest.renderState(smokeState);
 						await new Promise((resolve) => setTimeout(resolve, 0));
-						if (!loginScreenVisible || loginButtonText !== "Sign in with Glean" || !composerHiddenForLogin || !messagesHiddenForLogin) {
+						if (
+							!loginScreenVisible ||
+							loginButtonText !== "Sign in with Glean" ||
+							!composerHiddenForLogin ||
+							!messagesHiddenForLogin ||
+							!loginPanelVisible
+						) {
 							throw new Error("Login screen did not render for unauthenticated state");
 						}
 						const expectedProjectCount = new Set(sessions.map((session) => session.cwd)).size;
@@ -1118,6 +1131,7 @@ async function createWindow(): Promise<void> {
 							loginButtonText,
 							composerHiddenForLogin,
 							messagesHiddenForLogin,
+							loginPanelVisible,
 					modelText: document.querySelector("#composer-model")?.textContent,
 					userMessageText,
 					userMessageMetaHidden: userMessageMetaOpacity === "0",

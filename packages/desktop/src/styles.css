@@ -796,6 +796,7 @@ select:focus {
 }
 
 .login-screen {
+	grid-row: 2;
 	display: grid;
 	place-items: center;
 	min-height: 0;
@@ -1072,6 +1073,7 @@ body.resizing-panels {
 }
 
 .messages {
+	grid-row: 2;
 	min-width: 0;
 	max-width: 100%;
 	overflow-x: hidden;
@@ -1846,6 +1848,7 @@ body.resizing-panels {
 }
 
 .composer {
+	grid-row: 3;
 	display: flex;
 	justify-content: flex-start;
 	padding: 8px var(--chat-inset) 18px;
