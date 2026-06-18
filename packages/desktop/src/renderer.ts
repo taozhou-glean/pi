@@ -1399,14 +1399,16 @@ function renderSessionList(): void {
 				session.path === switchingSessionPath ? "loading" : ""
 			}`;
 			const title = session.name || session.firstMessage || "Untitled session";
-			button.innerHTML = `
-				<span class="session-item-title">${title}</span>
-				<span class="session-item-meta">${
-					session.path === switchingSessionPath
-						? "Loading..."
-						: `${session.messageCount} messages · ${formatRelative(session.modified)}`
-				}</span>
-		`;
+			const titleEl = document.createElement("span");
+			titleEl.className = "session-item-title";
+			titleEl.textContent = title;
+			const metaEl = document.createElement("span");
+			metaEl.className = "session-item-meta";
+			metaEl.textContent =
+				session.path === switchingSessionPath
+					? "Loading..."
+					: `${session.messageCount} messages · ${formatRelative(session.modified)}`;
+			button.append(titleEl, metaEl);
 			button.addEventListener("click", async () => {
 				try {
 					await switchToSession(session.path);
