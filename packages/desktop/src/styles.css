@@ -254,14 +254,130 @@ button:disabled {
 }
 
 .inspector {
-	display: flex;
-	flex-direction: column;
-	gap: 18px;
+	display: grid;
+	grid-template-columns: 42px minmax(0, 1fr);
+	grid-template-rows: minmax(0, 1fr);
 	min-width: 0;
-	padding: 48px 14px 18px;
+	padding: 48px 0 0;
 	background: var(--inspector);
 	border-left: 1px solid var(--line);
 	overflow: hidden;
+}
+
+.inspector-tabs {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 8px 6px;
+	border-right: 1px solid var(--line);
+	background: color-mix(in srgb, var(--inspector) 88%, var(--paper));
+}
+
+.inspector-tab {
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	min-height: 30px;
+	padding: 0;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--muted);
+	box-shadow: none;
+}
+
+.inspector-tab:hover,
+.inspector-tab:focus-visible,
+.inspector-tab.active {
+	background: var(--secondary-bg);
+	border-color: var(--line-strong);
+	color: var(--ink);
+}
+
+.inspector-tab svg {
+	display: block;
+	width: 17px;
+	height: 17px;
+	fill: none;
+	stroke: currentColor;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 1.9;
+}
+
+.inspector-content {
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.inspector-pane {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 18px;
+	min-width: 0;
+	min-height: 0;
+	padding: 0 14px 18px;
+	overflow: auto;
+}
+
+.inspector-pane[hidden] {
+	display: none;
+}
+
+.terminal-pane,
+.browser-pane {
+	gap: 0;
+	padding: 0;
+	overflow: hidden;
+}
+
+.right-pane-header,
+.browser-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 36px;
+	min-height: 36px;
+	padding: 0 8px 0 10px;
+	border-bottom: 1px solid var(--line);
+	background: var(--inspector);
+}
+
+.right-pane-header span {
+	flex: 1;
+	min-width: 0;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 680;
+	text-transform: uppercase;
+}
+
+.right-terminal-container {
+	padding: 4px;
+	background: #151515;
+}
+
+.browser-bar input {
+	height: 28px;
+	min-height: 28px;
+	padding: 0 9px;
+	border-radius: 8px;
+	font-size: 12px;
+}
+
+.browser-frame {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	border: 0;
+	background: var(--panel);
 }
 
 #app.left-collapsed .sidebar,

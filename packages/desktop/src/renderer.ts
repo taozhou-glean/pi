@@ -157,6 +157,12 @@ const toggleRightPanelButton = document.querySelector<HTMLButtonElement>("#toggl
 const toggleBottomPanelButton = document.querySelector<HTMLButtonElement>("#toggle-bottom-panel")!;
 const bottomPanel = document.querySelector<HTMLDivElement>("#bottom-panel")!;
 const terminalContainer = document.querySelector<HTMLDivElement>("#terminal-container")!;
+const rightTerminalContainer = document.querySelector<HTMLDivElement>("#right-terminal-container")!;
+const rightPanelTabs = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-right-panel-tab]"));
+const rightPanelPanes = Array.from(document.querySelectorAll<HTMLElement>("[data-right-panel-pane]"));
+const browserUrlInput = document.querySelector<HTMLInputElement>("#browser-url")!;
+const browserGoButton = document.querySelector<HTMLButtonElement>("#browser-go")!;
+const browserFrame = document.querySelector<HTMLElement>("#browser-frame")!;
 const bottomResizer = document.querySelector<HTMLDivElement>("#bottom-resizer")!;
 const leftResizer = document.querySelector<HTMLDivElement>("#left-resizer")!;
 const rightResizer = document.querySelector<HTMLDivElement>("#right-resizer")!;
@@ -240,6 +246,8 @@ const autoExpandLeftWidth = 1140;
 
 type ThemePreference = "system" | "light" | "dark";
 
+type RightPanelTab = "inspector" | "terminal" | "browser";
+
 type LayoutState = {
 	leftWidth: number;
 	rightWidth: number;
@@ -247,6 +255,7 @@ type LayoutState = {
 	rightCollapsed: boolean;
 	bottomHeight: number;
 	bottomCollapsed: boolean;
+	rightTab: RightPanelTab;
 };
 
 const layoutState: LayoutState = loadLayoutState();
@@ -270,6 +279,10 @@ function clamp(value: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, value));
 }
 
+function isRightPanelTab(value: unknown): value is RightPanelTab {
+	return value === "inspector" || value === "terminal" || value === "browser";
+}
+
 function loadLayoutState(): LayoutState {
 	try {
 		const parsed = JSON.parse(localStorage.getItem(layoutStorageKey) ?? "{}") as Partial<LayoutState>;
@@ -280,6 +293,7 @@ function loadLayoutState(): LayoutState {
 			rightCollapsed: parsed.rightCollapsed === undefined ? true : parsed.rightCollapsed === true,
 			bottomHeight: clamp(Number(parsed.bottomHeight) || 240, 120, 600),
 			bottomCollapsed: parsed.bottomCollapsed !== false,
+			rightTab: isRightPanelTab(parsed.rightTab) ? parsed.rightTab : "inspector",
 		};
 	} catch {
 		return {
@@ -289,6 +303,7 @@ function loadLayoutState(): LayoutState {
 			rightCollapsed: true,
 			bottomHeight: 240,
 			bottomCollapsed: true,
+			rightTab: "inspector",
 		};
 	}
 }
@@ -311,6 +326,14 @@ function applyLayoutState(): void {
 	}
 	toggleRightPanelButton.setAttribute("aria-pressed", String(!layoutState.rightCollapsed));
 	toggleBottomPanelButton.setAttribute("aria-pressed", String(!layoutState.bottomCollapsed));
+	for (const tab of rightPanelTabs) {
+		const active = tab.dataset.rightPanelTab === layoutState.rightTab;
+		tab.classList.toggle("active", active);
+		tab.setAttribute("aria-selected", String(active));
+	}
+	for (const pane of rightPanelPanes) {
+		pane.hidden = pane.dataset.rightPanelPane !== layoutState.rightTab;
+	}
 	bottomPanel.hidden = layoutState.bottomCollapsed;
 }
 
@@ -2030,26 +2053,26 @@ toggleRightPanelButton.addEventListener("click", () => {
 	togglePanel("right");
 });
 
-// Bottom panel (terminal)
+// Right panel tabs and terminal/browser panes
 let term: Terminal | undefined;
 let fitAddon: FitAddon | undefined;
 let terminalDataUnsub: (() => void) | undefined;
+let terminalResizeObserver: ResizeObserver | undefined;
+let terminalCreated = false;
 
-function toggleBottomPanel(): void {
-	layoutState.bottomCollapsed = !layoutState.bottomCollapsed;
-	applyLayoutState();
-	saveLayoutState();
-	if (!layoutState.bottomCollapsed) {
-		initTerminal();
-	}
+function rightPanelTabFromDataset(button: HTMLButtonElement): RightPanelTab | undefined {
+	const tab = button.dataset.rightPanelTab;
+	return isRightPanelTab(tab) ? tab : undefined;
 }
 
-function initTerminal(): void {
-	if (term) {
-		setTimeout(() => fitAddon?.fit(), 0);
-		term.focus();
-		return;
-	}
+function resizeTerminal(): void {
+	if (!term || !fitAddon || term.element?.offsetParent === null) return;
+	fitAddon.fit();
+	window.piDesktop.terminalResize(term.cols, term.rows);
+}
+
+function createTerminal(): void {
+	if (term) return;
 	term = new Terminal({
 		fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
 		fontSize: 13,
@@ -2064,29 +2087,86 @@ function initTerminal(): void {
 	});
 	fitAddon = new FitAddon();
 	term.loadAddon(fitAddon);
-	term.open(terminalContainer);
-	fitAddon.fit();
-	term.focus();
-
 	term.onData((data) => {
 		window.piDesktop.terminalWrite(data);
 	});
-
 	terminalDataUnsub = window.piDesktop.onTerminalData((data) => {
 		term?.write(data);
 	});
+	terminalResizeObserver = new ResizeObserver(resizeTerminal);
+	terminalResizeObserver.observe(terminalContainer);
+	terminalResizeObserver.observe(rightTerminalContainer);
+}
 
-	window.piDesktop.terminalCreate().catch(showError);
+function mountTerminal(host: HTMLElement): void {
+	createTerminal();
+	if (!term) return;
+	if (term.element) {
+		host.append(term.element);
+	} else {
+		term.open(host);
+	}
+	if (!terminalCreated) {
+		terminalCreated = true;
+		window.piDesktop.terminalCreate().catch(showError);
+	}
+	setTimeout(() => {
+		resizeTerminal();
+		term?.focus();
+	}, 0);
+}
 
-	const resizeObserver = new ResizeObserver(() => {
-		if (!layoutState.bottomCollapsed && fitAddon) {
-			fitAddon.fit();
-			if (term) {
-				window.piDesktop.terminalResize(term.cols, term.rows);
-			}
-		}
+function resetTerminal(host: HTMLElement): void {
+	terminalDataUnsub?.();
+	terminalDataUnsub = undefined;
+	terminalResizeObserver?.disconnect();
+	terminalResizeObserver = undefined;
+	term?.dispose();
+	term = undefined;
+	fitAddon = undefined;
+	terminalCreated = false;
+	window.piDesktop
+		.terminalDestroy()
+		.then(() => mountTerminal(host))
+		.catch(showError);
+}
+
+function setRightPanelTab(tab: RightPanelTab): void {
+	layoutState.rightTab = tab;
+	layoutState.rightCollapsed = false;
+	applyLayoutState();
+	saveLayoutState();
+	if (tab === "terminal") {
+		mountTerminal(rightTerminalContainer);
+	} else if (tab === "browser" && browserFrame.getAttribute("src") === "about:blank") {
+		openBrowserUrl(browserUrlInput.value);
+	}
+}
+
+function toggleBottomPanel(): void {
+	layoutState.bottomCollapsed = !layoutState.bottomCollapsed;
+	applyLayoutState();
+	saveLayoutState();
+	if (!layoutState.bottomCollapsed) {
+		mountTerminal(terminalContainer);
+	} else if (!layoutState.rightCollapsed && layoutState.rightTab === "terminal") {
+		mountTerminal(rightTerminalContainer);
+	}
+}
+
+function openBrowserUrl(value: string): void {
+	const trimmed = value.trim();
+	if (!trimmed) return;
+	const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+	browserUrlInput.value = url.href;
+	browserFrame.setAttribute("src", url.href);
+}
+
+for (const tab of rightPanelTabs) {
+	tab.addEventListener("click", () => {
+		const nextTab = rightPanelTabFromDataset(tab);
+		if (nextTab) setRightPanelTab(nextTab);
 	});
-	resizeObserver.observe(terminalContainer);
 }
 
 toggleBottomPanelButton.addEventListener("click", toggleBottomPanel);
@@ -2095,18 +2175,34 @@ document.querySelector<HTMLButtonElement>("#terminal-close")!.addEventListener("
 	layoutState.bottomCollapsed = true;
 	applyLayoutState();
 	saveLayoutState();
+	if (!layoutState.rightCollapsed && layoutState.rightTab === "terminal") {
+		mountTerminal(rightTerminalContainer);
+	}
 });
 
 document.querySelector<HTMLButtonElement>("#terminal-new-tab")!.addEventListener("click", () => {
-	if (term) {
-		terminalDataUnsub?.();
-		term.dispose();
-		term = undefined;
-		fitAddon = undefined;
-		window.piDesktop
-			.terminalDestroy()
-			.then(() => initTerminal())
-			.catch(showError);
+	resetTerminal(terminalContainer);
+});
+
+document.querySelector<HTMLButtonElement>("#right-terminal-new")!.addEventListener("click", () => {
+	resetTerminal(rightTerminalContainer);
+});
+
+browserGoButton.addEventListener("click", () => {
+	try {
+		openBrowserUrl(browserUrlInput.value);
+	} catch (error) {
+		showError(error);
+	}
+});
+
+browserUrlInput.addEventListener("keydown", (event) => {
+	if (event.key !== "Enter") return;
+	event.preventDefault();
+	try {
+		openBrowserUrl(browserUrlInput.value);
+	} catch (error) {
+		showError(error);
 	}
 });
 
@@ -2122,6 +2218,7 @@ bottomResizer.addEventListener("pointerdown", (event) => {
 		const delta = startY - e.clientY;
 		layoutState.bottomHeight = clamp(startHeight + delta, 120, 600);
 		applyLayoutState();
+		resizeTerminal();
 	}
 	function onUp(): void {
 		bottomResizer.classList.remove("dragging");

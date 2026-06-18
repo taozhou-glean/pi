@@ -520,6 +520,7 @@ async function createWindow(): Promise<void> {
 		webPreferences: {
 			contextIsolation: true,
 			nodeIntegration: false,
+			webviewTag: true,
 			preload: resolve(__dirname, "preload.cjs"),
 		},
 	});
