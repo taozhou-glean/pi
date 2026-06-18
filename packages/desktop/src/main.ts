@@ -795,6 +795,12 @@ async function createWindow(): Promise<void> {
 						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
 						await new Promise((resolve) => setTimeout(resolve, 0));
 						const slashMenuHidesUnsupported = document.querySelector(".slash-command-menu")?.hidden === true;
+						prompt.value = "/model opus";
+						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const slashModelSearchOpen = document.querySelector(".slash-command-menu")?.hidden === false;
+						const slashModelSearchShowsMatch =
+							document.querySelector(".slash-command-menu")?.textContent?.toLowerCase().includes("opus") === true;
 						prompt.value = "/session";
 						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
 						document.querySelector("#composer").requestSubmit();
@@ -817,6 +823,8 @@ async function createWindow(): Promise<void> {
 							!slashMenuOpen ||
 							!slashMenuShowsNew ||
 							!slashMenuHidesUnsupported ||
+							!slashModelSearchOpen ||
+							!slashModelSearchShowsMatch ||
 							!slashSessionNotice ||
 							!slashUnknownRejected
 						) {
@@ -1119,6 +1127,8 @@ async function createWindow(): Promise<void> {
 						slashMenuOpen,
 						slashMenuShowsNew,
 						slashMenuHidesUnsupported,
+						slashModelSearchOpen,
+						slashModelSearchShowsMatch,
 						slashSessionNotice,
 						slashUnknownRejected,
 						pastedAttachmentCount,

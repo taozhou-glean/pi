@@ -392,6 +392,10 @@ type SlashCommand = {
 	run(args: string): Promise<void>;
 };
 
+type SlashPaletteItem =
+	| { type: "command"; command: SlashCommand }
+	| { type: "model"; model: DesktopModel; label: string; description: string };
+
 const slashCommands: SlashCommand[] = [
 	{
 		name: "new",
@@ -508,6 +512,33 @@ function matchingSlashCommands(): SlashCommand[] {
 	);
 }
 
+function modelSearchQueryFromSlash(): string | undefined {
+	const value = promptInput.value;
+	const cursor = promptInput.selectionStart ?? value.length;
+	if (cursor !== value.length) return undefined;
+	const match = value.match(/^\/model\s+(.+)$/i);
+	return match?.[1]?.trim().toLowerCase();
+}
+
+function matchingSlashModels(): DesktopModel[] {
+	const query = modelSearchQueryFromSlash();
+	if (!query) return [];
+	return models.filter((model) => `${model.provider}/${model.id}`.toLowerCase().includes(query)).slice(0, 12);
+}
+
+function matchingSlashPaletteItems(): SlashPaletteItem[] {
+	const modelMatches = matchingSlashModels();
+	if (modelMatches.length > 0) {
+		return modelMatches.map((model) => ({
+			type: "model",
+			model,
+			label: model.id,
+			description: model.provider,
+		}));
+	}
+	return matchingSlashCommands().map((command) => ({ type: "command", command }));
+}
+
 function closeSlashCommandMenu(): void {
 	slashCommandMenu.hidden = true;
 	slashCommandMenu.replaceChildren();
@@ -524,39 +555,52 @@ function selectSlashCommand(command: SlashCommand): void {
 	syncSendButtonState();
 }
 
+async function selectSlashPaletteItem(item: SlashPaletteItem): Promise<void> {
+	if (item.type === "command") {
+		selectSlashCommand(item.command);
+		return;
+	}
+	promptInput.value = `/model ${item.model.provider}/${item.model.id}`;
+	await executeSlashCommand(promptInput.value);
+}
+
 function renderSlashCommandMenu(): void {
 	const value = promptInput.value;
 	const cursor = promptInput.selectionStart ?? value.length;
 	const beforeCursor = value.slice(0, cursor);
+	const isModelSearch = modelSearchQueryFromSlash() !== undefined;
 	const shouldShow =
-		value.startsWith("/") &&
-		beforeCursor.startsWith("/") &&
-		!beforeCursor.includes(" ") &&
-		!beforeCursor.includes("\n") &&
-		cursor === value.length;
+		isModelSearch ||
+		(value.startsWith("/") &&
+			beforeCursor.startsWith("/") &&
+			!beforeCursor.includes(" ") &&
+			!beforeCursor.includes("\n") &&
+			cursor === value.length);
 	if (!shouldShow) {
 		closeSlashCommandMenu();
 		return;
 	}
 
-	const matches = matchingSlashCommands();
+	const matches = matchingSlashPaletteItems();
 	if (matches.length === 0) {
 		closeSlashCommandMenu();
 		return;
 	}
 	selectedSlashCommandIndex = clamp(selectedSlashCommandIndex, 0, matches.length - 1);
-	slashCommandMenu.replaceChildren(createMenuLabel("Commands"));
-	for (const [index, command] of matches.entries()) {
+	slashCommandMenu.replaceChildren(createMenuLabel(isModelSearch ? "Models" : "Commands"));
+	for (const [index, paletteItem] of matches.entries()) {
 		const item = document.createElement("button");
 		item.type = "button";
 		item.className = `slash-command-item ${index === selectedSlashCommandIndex ? "active" : ""}`;
 		item.innerHTML = `
-			<span class="slash-command-name">${command.usage}</span>
-			<span class="slash-command-description">${command.description}</span>
+			<span class="slash-command-name">${paletteItem.type === "command" ? paletteItem.command.usage : paletteItem.label}</span>
+			<span class="slash-command-description">${
+				paletteItem.type === "command" ? paletteItem.command.description : paletteItem.description
+			}</span>
 		`;
 		item.addEventListener("mousedown", (event) => {
 			event.preventDefault();
-			selectSlashCommand(command);
+			selectSlashPaletteItem(paletteItem).catch(showError);
 		});
 		slashCommandMenu.append(item);
 	}
@@ -564,7 +608,7 @@ function renderSlashCommandMenu(): void {
 }
 
 function moveSlashSelection(delta: number): void {
-	const matches = matchingSlashCommands();
+	const matches = matchingSlashPaletteItems();
 	if (matches.length === 0) return;
 	selectedSlashCommandIndex = (selectedSlashCommandIndex + delta + matches.length) % matches.length;
 	renderSlashCommandMenu();
@@ -1754,10 +1798,10 @@ promptInput.addEventListener("keydown", (event) => {
 			return;
 		}
 		if (event.key === "Tab" || event.key === "Enter") {
-			const command = matchingSlashCommands()[selectedSlashCommandIndex];
-			if (command) {
+			const item = matchingSlashPaletteItems()[selectedSlashCommandIndex];
+			if (item) {
 				event.preventDefault();
-				selectSlashCommand(command);
+				selectSlashPaletteItem(item).catch(showError);
 				return;
 			}
 		}
