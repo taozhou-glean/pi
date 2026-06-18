@@ -14,6 +14,10 @@ const api = {
 	setCwd: (cwd: string) => ipcRenderer.invoke("pi:set-cwd", cwd),
 	listModels: () => ipcRenderer.invoke("pi:list-models"),
 	setModel: (provider: string, id: string) => ipcRenderer.invoke("pi:set-model", provider, id),
+	compact: (customInstructions?: string) => ipcRenderer.invoke("pi:compact", customInstructions),
+	setSessionName: (name: string) => ipcRenderer.invoke("pi:set-session-name", name),
+	reloadSession: () => ipcRenderer.invoke("pi:reload-session"),
+	quit: () => ipcRenderer.invoke("pi:quit"),
 	gitStatus: () => ipcRenderer.invoke("pi:git-status"),
 	onState: (handler: (state: unknown) => void) => {
 		const listener = (_event: Electron.IpcRendererEvent, state: unknown) => handler(state);

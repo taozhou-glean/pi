@@ -93,6 +93,10 @@ type PiDesktopApi = {
 	setCwd(cwd: string): Promise<DesktopState>;
 	listModels(): Promise<DesktopModel[]>;
 	setModel(provider: string, id: string): Promise<DesktopState>;
+	compact(customInstructions?: string): Promise<DesktopState>;
+	setSessionName(name: string): Promise<DesktopState>;
+	reloadSession(): Promise<DesktopState>;
+	quit(): Promise<void>;
 	gitStatus(): Promise<GitStatus>;
 	onState(handler: (state: DesktopState) => void): () => void;
 	onMessages(handler: (messages: DesktopMessage[]) => void): () => void;
@@ -107,6 +111,7 @@ declare global {
 			renderState(next: DesktopState): void;
 			renderSessionList(): void;
 			applyContextSelections(selections: DesktopContextSelection[], options?: { attachPathChips?: boolean }): void;
+			getSlashCommands(): string[];
 			sessions: DesktopSessionInfo[];
 		};
 	}
@@ -150,6 +155,10 @@ const composerAttachments = document.createElement("div");
 composerAttachments.className = "composer-attachments";
 composerAttachments.hidden = true;
 promptInput.before(composerAttachments);
+const slashCommandMenu = document.createElement("div");
+slashCommandMenu.className = "composer-menu slash-command-menu";
+slashCommandMenu.hidden = true;
+promptInput.before(slashCommandMenu);
 const imagePreviewOverlay = document.createElement("div");
 imagePreviewOverlay.className = "image-preview-overlay";
 imagePreviewOverlay.hidden = true;
@@ -164,6 +173,7 @@ let switchingSessionPath: string | undefined;
 let renderedSessionId: string | undefined;
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
+let selectedSlashCommandIndex = 0;
 const messagePageSize = 120;
 const projectSessionPageSize = 5;
 const projectSessionLimits = new Map<string, number>();
@@ -340,6 +350,7 @@ function setMenuOpen(button: HTMLButtonElement, menu: HTMLElement, open: boolean
 function closeComposerMenus(): void {
 	setMenuOpen(composerAddButton, composerAddMenu, false);
 	setMenuOpen(composerModelButton, composerModelMenu, false);
+	closeSlashCommandMenu();
 }
 
 function syncComposerModelSelection(): void {
@@ -372,6 +383,218 @@ function createMenuSeparator(): HTMLDivElement {
 	separator.className = "composer-menu-separator";
 	separator.setAttribute("role", "separator");
 	return separator;
+}
+
+type SlashCommand = {
+	name: string;
+	usage: string;
+	description: string;
+	run(args: string): Promise<void>;
+};
+
+const slashCommands: SlashCommand[] = [
+	{
+		name: "new",
+		usage: "/new",
+		description: "Start a new chat in this workspace",
+		run: async () => {
+			renderState(await window.piDesktop.newSession());
+			await refreshAfterSessionChange();
+		},
+	},
+	{
+		name: "model",
+		usage: "/model [search]",
+		description: "Switch models or open the model selector",
+		run: async (args) => {
+			if (!args.trim()) {
+				closeComposerMenus();
+				setMenuOpen(composerModelButton, composerModelMenu, true);
+				composerModelMenu.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+				return;
+			}
+			const query = args.toLowerCase();
+			const matches = models.filter((model) => `${model.provider}/${model.id}`.toLowerCase().includes(query));
+			if (matches.length === 0) throw new Error(`No model matches "${args}".`);
+			const exact =
+				matches.find(
+					(model) => model.id.toLowerCase() === query || `${model.provider}/${model.id}`.toLowerCase() === query,
+				) ?? matches[0];
+			renderState(await window.piDesktop.setModel(exact.provider, exact.id));
+			showDesktopMessage("Model", `Switched to ${exact.provider}/${exact.id}.`);
+		},
+	},
+	{
+		name: "compact",
+		usage: "/compact [instructions]",
+		description: "Compact the current chat context",
+		run: async (args) => {
+			renderState(await window.piDesktop.compact(args));
+		},
+	},
+	{
+		name: "name",
+		usage: "/name <title>",
+		description: "Rename this chat",
+		run: async (args) => {
+			renderState(await window.piDesktop.setSessionName(args));
+			await refreshSessions();
+		},
+	},
+	{
+		name: "session",
+		usage: "/session",
+		description: "Show current session details",
+		run: async () => {
+			const current = state;
+			if (!current) throw new Error("Desktop state is not ready yet.");
+			showDesktopMessage(
+				"Session",
+				[
+					`Name: ${current.sessionName || sessionTitle.textContent || "New chat"}`,
+					`ID: ${current.sessionId ?? "-"}`,
+					`CWD: ${current.cwd}`,
+					`Model: ${current.model ? `${current.model.provider}/${current.model.id}` : "No model selected"}`,
+					`Messages: ${current.messageCount}`,
+				].join("\n"),
+			);
+		},
+	},
+	{
+		name: "copy",
+		usage: "/copy",
+		description: "Copy the latest assistant response",
+		run: async () => {
+			const messages = await window.piDesktop.getMessages();
+			const lastAssistant = [...messages]
+				.reverse()
+				.find((message) => message.role === "assistant" && message.text.trim());
+			if (!lastAssistant) throw new Error("No assistant response to copy.");
+			await navigator.clipboard.writeText(lastAssistant.text);
+			showDesktopMessage("Clipboard", "Copied the latest assistant response.");
+		},
+	},
+	{
+		name: "reload",
+		usage: "/reload",
+		description: "Reload Pi settings, prompts, and extensions",
+		run: async () => {
+			renderState(await window.piDesktop.reloadSession());
+			await refreshAfterSessionChange();
+			showDesktopMessage("Reload", "Reloaded session resources.");
+		},
+	},
+	{
+		name: "quit",
+		usage: "/quit",
+		description: "Quit Pi Desktop",
+		run: async () => {
+			await window.piDesktop.quit();
+		},
+	},
+];
+
+function supportedSlashCommandNames(): string[] {
+	return slashCommands.map((command) => command.name);
+}
+
+function matchingSlashCommands(): SlashCommand[] {
+	const query = promptInput.value.slice(1, promptInput.selectionStart ?? promptInput.value.length).toLowerCase();
+	return slashCommands.filter(
+		(command) =>
+			command.name.toLowerCase().includes(query) ||
+			command.description.toLowerCase().includes(query) ||
+			command.usage.toLowerCase().includes(query),
+	);
+}
+
+function closeSlashCommandMenu(): void {
+	slashCommandMenu.hidden = true;
+	slashCommandMenu.replaceChildren();
+	selectedSlashCommandIndex = 0;
+}
+
+function selectSlashCommand(command: SlashCommand): void {
+	promptInput.value =
+		command.usage.includes("<") || command.usage.includes("[") ? `/${command.name} ` : `/${command.name}`;
+	promptInput.focus();
+	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
+	closeSlashCommandMenu();
+	autosizePrompt();
+	syncSendButtonState();
+}
+
+function renderSlashCommandMenu(): void {
+	const value = promptInput.value;
+	const cursor = promptInput.selectionStart ?? value.length;
+	const beforeCursor = value.slice(0, cursor);
+	const shouldShow =
+		value.startsWith("/") &&
+		beforeCursor.startsWith("/") &&
+		!beforeCursor.includes(" ") &&
+		!beforeCursor.includes("\n") &&
+		cursor === value.length;
+	if (!shouldShow) {
+		closeSlashCommandMenu();
+		return;
+	}
+
+	const matches = matchingSlashCommands();
+	if (matches.length === 0) {
+		closeSlashCommandMenu();
+		return;
+	}
+	selectedSlashCommandIndex = clamp(selectedSlashCommandIndex, 0, matches.length - 1);
+	slashCommandMenu.replaceChildren(createMenuLabel("Commands"));
+	for (const [index, command] of matches.entries()) {
+		const item = document.createElement("button");
+		item.type = "button";
+		item.className = `slash-command-item ${index === selectedSlashCommandIndex ? "active" : ""}`;
+		item.innerHTML = `
+			<span class="slash-command-name">${command.usage}</span>
+			<span class="slash-command-description">${command.description}</span>
+		`;
+		item.addEventListener("mousedown", (event) => {
+			event.preventDefault();
+			selectSlashCommand(command);
+		});
+		slashCommandMenu.append(item);
+	}
+	slashCommandMenu.hidden = false;
+}
+
+function moveSlashSelection(delta: number): void {
+	const matches = matchingSlashCommands();
+	if (matches.length === 0) return;
+	selectedSlashCommandIndex = (selectedSlashCommandIndex + delta + matches.length) % matches.length;
+	renderSlashCommandMenu();
+}
+
+async function executeSlashCommand(input: string): Promise<void> {
+	const match = input.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+	if (!match) {
+		showError(`Unknown command: ${input}`);
+		return;
+	}
+	const [, rawName, rawArgs = ""] = match;
+	const command = slashCommands.find((candidate) => candidate.name === rawName.toLowerCase());
+	if (!command) {
+		showError(`Unknown command: /${rawName}`);
+		return;
+	}
+
+	promptInput.value = "";
+	closeSlashCommandMenu();
+	autosizePrompt();
+	syncSendButtonState();
+	setBusy(true);
+	try {
+		await command.run(rawArgs.trim());
+	} catch (error) {
+		showError(error);
+	} finally {
+		setBusy(Boolean(state?.isStreaming));
+	}
 }
 
 function formatRelative(value: string): string {
@@ -899,6 +1122,7 @@ window.__piDesktopTest = {
 	renderState,
 	renderSessionList,
 	applyContextSelections,
+	getSlashCommands: supportedSlashCommandNames,
 	get sessions() {
 		return sessions;
 	},
@@ -1185,12 +1409,16 @@ async function switchToSession(sessionPath: string): Promise<void> {
 
 function showError(error: unknown): void {
 	const text = error instanceof Error ? error.message : String(error);
+	showDesktopMessage("Desktop", text, "error");
+}
+
+function showDesktopMessage(labelText: string, text: string, variant: "notice" | "error" = "notice"): void {
 	const row = document.createElement("article");
-	row.className = "message error";
+	row.className = `message ${variant}`;
 	const header = document.createElement("div");
 	header.className = "message-header";
 	const label = document.createElement("span");
-	label.textContent = "Desktop";
+	label.textContent = labelText;
 	header.append(label);
 	const body = document.createElement("div");
 	body.className = "message-body";
@@ -1486,6 +1714,14 @@ composer.addEventListener("submit", async (event) => {
 	event.preventDefault();
 	const message = promptInput.value.trim();
 	if (!message && composerImages.length === 0 && composerFiles.length === 0) return;
+	if (message.startsWith("/")) {
+		if (composerImages.length > 0 || composerFiles.length > 0) {
+			showError("Slash commands cannot include attachments.");
+			return;
+		}
+		await executeSlashCommand(message);
+		return;
+	}
 	const images = composerImages.map((image) => ({
 		type: "image" as const,
 		data: image.data,
@@ -1506,6 +1742,26 @@ composer.addEventListener("submit", async (event) => {
 });
 
 promptInput.addEventListener("keydown", (event) => {
+	if (!slashCommandMenu.hidden) {
+		if (event.key === "ArrowDown") {
+			event.preventDefault();
+			moveSlashSelection(1);
+			return;
+		}
+		if (event.key === "ArrowUp") {
+			event.preventDefault();
+			moveSlashSelection(-1);
+			return;
+		}
+		if (event.key === "Tab" || event.key === "Enter") {
+			const command = matchingSlashCommands()[selectedSlashCommandIndex];
+			if (command) {
+				event.preventDefault();
+				selectSlashCommand(command);
+				return;
+			}
+		}
+	}
 	if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
 		composer.requestSubmit();
 	}
@@ -1514,6 +1770,7 @@ promptInput.addEventListener("keydown", (event) => {
 promptInput.addEventListener("input", () => {
 	autosizePrompt();
 	syncSendButtonState();
+	renderSlashCommandMenu();
 });
 
 promptInput.addEventListener("paste", (event) => {

@@ -772,6 +772,56 @@ async function createWindow(): Promise<void> {
 				await new Promise((resolve) => setTimeout(resolve, 0));
 					const grownPromptHeight = Math.round(prompt.getBoundingClientRect().height);
 						const textareaResize = getComputedStyle(prompt).resize;
+						const slashCommands = window.__piDesktopTest.getSlashCommands();
+						const slashHasSupportedCommands =
+							slashCommands.includes("new") &&
+							slashCommands.includes("model") &&
+							slashCommands.includes("compact") &&
+							slashCommands.includes("name") &&
+							slashCommands.includes("session") &&
+							slashCommands.includes("copy") &&
+							slashCommands.includes("reload") &&
+							slashCommands.includes("quit");
+						const slashHidesUnsupportedPiCommands =
+							!slashCommands.includes("share") &&
+							!slashCommands.includes("login") &&
+							!slashCommands.includes("fork");
+						prompt.value = "/";
+						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const slashMenuOpen = document.querySelector(".slash-command-menu")?.hidden === false;
+						const slashMenuShowsNew = document.querySelector(".slash-command-menu")?.textContent?.includes("/new") === true;
+						prompt.value = "/sha";
+						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const slashMenuHidesUnsupported = document.querySelector(".slash-command-menu")?.hidden === true;
+						prompt.value = "/session";
+						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
+						document.querySelector("#composer").requestSubmit();
+						await new Promise((resolve) => setTimeout(resolve, 50));
+						const slashSessionNotice = Array.from(document.querySelectorAll(".message.notice")).some((message) =>
+							message.textContent.includes("Session") && message.textContent.includes("CWD:"),
+						);
+						prompt.value = "/share";
+						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
+						document.querySelector("#composer").requestSubmit();
+						await new Promise((resolve) => setTimeout(resolve, 50));
+						const slashUnknownRejected = Array.from(document.querySelectorAll(".message.error")).some((message) =>
+							message.textContent.includes("Unknown command: /share"),
+						);
+						prompt.value = "";
+						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
+						if (
+							!slashHasSupportedCommands ||
+							!slashHidesUnsupportedPiCommands ||
+							!slashMenuOpen ||
+							!slashMenuShowsNew ||
+							!slashMenuHidesUnsupported ||
+							!slashSessionNotice ||
+							!slashUnknownRejected
+						) {
+							throw new Error("Slash command palette did not match supported desktop commands");
+						}
 						const pastedImageFile = new File(
 							[new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])],
 							"paste.png",
@@ -1064,6 +1114,13 @@ async function createWindow(): Promise<void> {
 						promptAutosized: grownPromptHeight > defaultPromptHeight,
 						defaultMessageTimeOpacity,
 						textareaResize,
+						slashHasSupportedCommands,
+						slashHidesUnsupportedPiCommands,
+						slashMenuOpen,
+						slashMenuShowsNew,
+						slashMenuHidesUnsupported,
+						slashSessionNotice,
+						slashUnknownRejected,
 						pastedAttachmentCount,
 						pastedAttachmentPreviewed,
 						sendEnabledWithPastedImage,
@@ -1223,6 +1280,28 @@ ipcMain.handle("pi:set-model", async (_event, provider: string, id: string) => {
 	if (!model) throw new Error(`Unknown model: ${provider}/${id}`);
 	await getSession().setModel(model);
 	return serializeState();
+});
+ipcMain.handle("pi:compact", async (_event, customInstructions?: string) => {
+	await ensureDesktopSession();
+	await getSession().compact(
+		typeof customInstructions === "string" ? customInstructions.trim() || undefined : undefined,
+	);
+	return serializeState();
+});
+ipcMain.handle("pi:set-session-name", async (_event, name: string) => {
+	await ensureDesktopSession();
+	const trimmed = name.trim();
+	if (!trimmed) throw new Error("Usage: /name <chat name>");
+	getSession().setSessionName(trimmed);
+	return serializeState();
+});
+ipcMain.handle("pi:reload-session", async () => {
+	await ensureDesktopSession();
+	await getSession().reload();
+	return serializeState();
+});
+ipcMain.handle("pi:quit", () => {
+	app.quit();
 });
 ipcMain.handle("pi:git-status", async () => {
 	await ensureDesktopSession();

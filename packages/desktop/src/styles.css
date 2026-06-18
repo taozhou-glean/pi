@@ -955,6 +955,7 @@ body.resizing-panels {
 .message.assistant,
 .message.toolResult,
 .message.custom,
+.message.notice,
 .message.error {
 	align-self: flex-start;
 }
@@ -962,12 +963,32 @@ body.resizing-panels {
 #app.left-collapsed .message.assistant,
 #app.left-collapsed .message.toolResult,
 #app.left-collapsed .message.custom,
+#app.left-collapsed .message.notice,
 #app.left-collapsed .message.error {
 	align-self: center;
 }
 
 .message.toolResult {
 	background: var(--message-tool);
+}
+
+.message.notice {
+	width: min(680px, 100%);
+	padding: 10px 12px;
+	border: 1px solid var(--line-strong);
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--panel) 92%, var(--paper));
+	color: var(--ink);
+}
+
+.message.notice .message-header {
+	margin-bottom: 2px;
+	min-height: 0;
+}
+
+.message.notice .message-body {
+	white-space: pre-wrap;
+	color: color-mix(in srgb, var(--ink) 86%, var(--faint));
 }
 
 .message.error {
@@ -1807,6 +1828,13 @@ body[data-theme="dark"] #send {
 	overflow: auto;
 }
 
+.slash-command-menu {
+	left: 0;
+	width: min(420px, 100%);
+	max-height: min(330px, 48vh);
+	overflow: auto;
+}
+
 .composer-menu button {
 	display: grid;
 	grid-template-columns: 24px minmax(0, 1fr) auto;
@@ -1829,6 +1857,27 @@ body[data-theme="dark"] #send {
 	grid-template-columns: minmax(0, 1fr) auto;
 	gap: 12px;
 	min-height: 32px;
+}
+
+.composer-menu .slash-command-item {
+	grid-template-columns: minmax(86px, auto) minmax(0, 1fr);
+	gap: 12px;
+	min-height: 38px;
+}
+
+.slash-command-name {
+	font-family: var(--mono-font);
+	font-size: 13px;
+	color: var(--ink);
+}
+
+.slash-command-description {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--faint);
+	font-size: 12px;
+	font-weight: 520;
 }
 
 .composer-menu button[hidden] {
