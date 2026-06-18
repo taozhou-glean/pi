@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -46,6 +47,10 @@ type DesktopPromptPayload = {
 	text: string;
 	images?: DesktopPromptImage[];
 };
+
+type DesktopContextSelection =
+	| { type: "path"; path: string; name: string }
+	| { type: "image"; path: string; name: string; data: string; mimeType: string };
 
 type DesktopToolCall = {
 	type: "toolCall";
@@ -295,6 +300,35 @@ function normalizePromptPayload(payload: unknown): DesktopPromptPayload {
 				.map((image) => ({ type: "image" as const, data: image.data, mimeType: image.mimeType }))
 		: [];
 	return { text: typeof typed.text === "string" ? typed.text : "", images };
+}
+
+function imageMimeTypeForPath(path: string): string | undefined {
+	switch (extname(path).toLowerCase()) {
+		case ".png":
+			return "image/png";
+		case ".jpg":
+		case ".jpeg":
+			return "image/jpeg";
+		case ".gif":
+			return "image/gif";
+		case ".webp":
+			return "image/webp";
+		case ".bmp":
+			return "image/bmp";
+		default:
+			return undefined;
+	}
+}
+
+async function serializeContextSelections(paths: string[]): Promise<DesktopContextSelection[]> {
+	return Promise.all(
+		paths.map(async (path) => {
+			const mimeType = imageMimeTypeForPath(path);
+			if (!mimeType) return { type: "path" as const, path, name: basename(path) };
+			const data = (await readFile(path)).toString("base64");
+			return { type: "image" as const, path, name: basename(path), data, mimeType };
+		}),
+	);
 }
 
 function serializeState(): DesktopState {
@@ -651,7 +685,10 @@ async function createWindow(): Promise<void> {
 						role: "user",
 						text: "Show markdown",
 						content: [
-							{ type: "text", text: "Show markdown" },
+							{
+								type: "text",
+								text: "Show markdown\\n\\nUse this path as context:\\n- /tmp/selected.log",
+							},
 							{
 								type: "image",
 								data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
@@ -770,6 +807,34 @@ async function createWindow(): Promise<void> {
 						document.querySelector(".composer-attachment-remove")?.click();
 						await new Promise((resolve) => setTimeout(resolve, 0));
 						const pastedAttachmentRemoved = document.querySelectorAll(".composer-attachment").length === 0;
+						window.__piDesktopTest.applyContextSelections([
+							{
+								type: "image",
+								path: "/tmp/selected.png",
+								name: "selected.png",
+								data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+								mimeType: "image/png",
+							},
+						]);
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const selectedImageAttachmentCount = document.querySelectorAll(".composer-attachment").length;
+						const selectedImageAttachmentPreviewed = document.querySelector(".composer-attachment img") !== null;
+						const sendEnabledWithSelectedImage = document.querySelector("#send").disabled === false;
+						document.querySelector(".composer-attachment-remove")?.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const selectedImageAttachmentRemoved = document.querySelectorAll(".composer-attachment").length === 0;
+						window.__piDesktopTest.applyContextSelections(
+							[{ type: "path", path: "/tmp/selected.log", name: "selected.log" }],
+							{ attachPathChips: true },
+						);
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const selectedFileAttachmentCount = document.querySelectorAll(".composer-file-attachment").length;
+						const selectedFileAttachmentName = document.querySelector(".composer-file-name")?.textContent;
+						const selectedFileAttachmentType = document.querySelector(".composer-file-type")?.textContent;
+						const sendEnabledWithSelectedFile = document.querySelector("#send").disabled === false;
+						document.querySelector(".composer-file-remove")?.click();
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const selectedFileAttachmentRemoved = document.querySelectorAll(".composer-file-attachment").length === 0;
 						if (
 							pastedAttachmentCount !== 1 ||
 							!pastedAttachmentPreviewed ||
@@ -781,7 +846,16 @@ async function createWindow(): Promise<void> {
 							zoomedOutLabel !== "100%" ||
 							zoomedOutScale !== "1" ||
 							!largePreviewClosed ||
-							!pastedAttachmentRemoved
+							!pastedAttachmentRemoved ||
+							selectedImageAttachmentCount !== 1 ||
+							!selectedImageAttachmentPreviewed ||
+							!sendEnabledWithSelectedImage ||
+							!selectedImageAttachmentRemoved ||
+							selectedFileAttachmentCount !== 1 ||
+							selectedFileAttachmentName !== "selected.log" ||
+							selectedFileAttachmentType !== "LOG" ||
+							!sendEnabledWithSelectedFile ||
+							!selectedFileAttachmentRemoved
 						) {
 							throw new Error("Composer image paste preview did not behave as expected");
 						}
@@ -816,7 +890,12 @@ async function createWindow(): Promise<void> {
 							const toolResultHiddenAsMessage = document.querySelector(".message.toolResult") === null;
 							const noStaticSessionMergeIcon = document.querySelector(".session-item-icon") === null;
 							const renderedAttachmentCount = document.querySelectorAll(".message.user .message-image-tile").length;
+							const renderedFileChipCount = document.querySelectorAll(".message.user .message-file-chip").length;
+							const renderedFileChipName = document.querySelector(".message.user .message-file-chip-name")?.textContent;
 							const userBubbleExcludesImage = document.querySelector(".message.user .message-user-bubble img") === null;
+							const userBubbleExcludesFileContext =
+								document.querySelector(".message.user .message-user-bubble")?.textContent?.includes("Use this path as context") ===
+								false;
 							document.querySelector(".message.user .message-image-tile")?.click();
 							await new Promise((resolve) => setTimeout(resolve, 0));
 							const renderedAttachmentPreviewOpened =
@@ -824,7 +903,14 @@ async function createWindow(): Promise<void> {
 								document.querySelector(".image-preview-dialog img") !== null;
 							document.querySelector(".image-preview-close")?.click();
 							await new Promise((resolve) => setTimeout(resolve, 0));
-							if (renderedAttachmentCount !== 1 || !userBubbleExcludesImage || !renderedAttachmentPreviewOpened) {
+							if (
+								renderedAttachmentCount !== 1 ||
+								renderedFileChipCount !== 1 ||
+								renderedFileChipName !== "selected.log" ||
+								!userBubbleExcludesImage ||
+								!userBubbleExcludesFileContext ||
+								!renderedAttachmentPreviewOpened
+							) {
 								throw new Error("Rendered user image attachment did not match expected tile behavior");
 							}
 							const overflowMessages = Array.from({ length: 48 }, (_, index) => ({
@@ -917,7 +1003,10 @@ async function createWindow(): Promise<void> {
 						toolGroupCollapsed,
 						toolResultHiddenAsMessage,
 						renderedAttachmentCount,
+						renderedFileChipCount,
+						renderedFileChipName,
 						userBubbleExcludesImage,
+						userBubbleExcludesFileContext,
 						renderedAttachmentPreviewOpened,
 					gitBranch: git.branch,
 						gitIsRepo: git.isRepo,
@@ -986,6 +1075,15 @@ async function createWindow(): Promise<void> {
 						zoomedOutScale,
 						largePreviewClosed,
 						pastedAttachmentRemoved,
+						selectedImageAttachmentCount,
+						selectedImageAttachmentPreviewed,
+						sendEnabledWithSelectedImage,
+						selectedImageAttachmentRemoved,
+						selectedFileAttachmentCount,
+						selectedFileAttachmentName,
+						selectedFileAttachmentType,
+						sendEnabledWithSelectedFile,
+						selectedFileAttachmentRemoved,
 						errorHasFrame: errorStyle.borderTopStyle !== "none" && errorStyle.paddingTop !== "0px",
 						contextRowsAreFlat: contextRowStyle.borderLeftStyle === "none" && contextRowStyle.backgroundColor === "rgba(0, 0, 0, 0)",
 						autoFollowStayedAtBottom,
@@ -1095,14 +1193,16 @@ ipcMain.handle("pi:abort", async () => {
 ipcMain.handle("pi:choose-context", async (_event, kind: "files" | "folder" | "workspace") => {
 	await ensureDesktopSession();
 	if (kind === "workspace") {
-		return [currentCwd];
+		return [{ type: "path", path: currentCwd, name: basename(currentCwd) }];
 	}
 	const result = await dialog.showOpenDialog(mainWindow!, {
 		defaultPath: currentCwd,
 		properties:
 			kind === "folder" ? ["openDirectory", "createDirectory"] : ["openFile", "multiSelections", "showHiddenFiles"],
 	});
-	return result.canceled ? [] : result.filePaths;
+	if (result.canceled) return [];
+	if (kind === "folder") return result.filePaths.map((path) => ({ type: "path", path, name: basename(path) }));
+	return serializeContextSelections(result.filePaths);
 });
 ipcMain.handle("pi:set-cwd", async (_event, cwd: string) => {
 	if (!existsSync(cwd)) throw new Error(`Path does not exist: ${cwd}`);

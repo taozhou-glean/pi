@@ -1230,6 +1230,50 @@ body.resizing-panels {
 	object-fit: cover;
 }
 
+.file-attachments {
+	gap: 8px;
+}
+
+.message-file-chip {
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr);
+	align-items: center;
+	gap: 9px;
+	max-width: min(520px, 100%);
+	min-height: 38px;
+	padding: 7px 13px;
+	border: 1px solid color-mix(in srgb, var(--ink) 18%, var(--line));
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--message-user) 82%, var(--panel));
+	color: var(--ink);
+	box-shadow: none;
+}
+
+.message-file-chip-icon {
+	display: grid;
+	place-items: center;
+	color: var(--muted);
+}
+
+.message-file-chip-icon svg {
+	width: 18px;
+	height: 18px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.9;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.message-file-chip-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 14px;
+	font-weight: 660;
+}
+
 .composer-attachments {
 	display: flex;
 	flex-wrap: wrap;
@@ -1280,6 +1324,59 @@ body.resizing-panels {
 	object-fit: cover;
 }
 
+.composer-file-attachment {
+	position: relative;
+	display: grid;
+	grid-template-columns: 54px minmax(0, 1fr);
+	align-items: center;
+	width: min(360px, 100%);
+	min-height: 72px;
+	padding: 8px 38px 8px 8px;
+	border: 1px solid var(--line-strong);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--panel) 86%, transparent);
+}
+
+.composer-file-icon {
+	display: grid;
+	place-items: center;
+	width: 48px;
+	height: 48px;
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--ink) 8%, transparent);
+	color: var(--muted);
+}
+
+.composer-file-icon svg {
+	width: 28px;
+	height: 28px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.composer-file-meta {
+	min-width: 0;
+}
+
+.composer-file-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 14px;
+	font-weight: 680;
+	color: var(--ink);
+}
+
+.composer-file-type {
+	margin-top: 3px;
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--muted);
+}
+
 .composer-attachment-remove {
 	position: absolute;
 	top: 3px;
@@ -1299,10 +1396,23 @@ body.resizing-panels {
 	backdrop-filter: blur(8px);
 }
 
+.composer-file-remove {
+	top: 8px;
+	right: 8px;
+	background: color-mix(in srgb, var(--panel) 80%, transparent);
+	border-color: var(--line);
+	color: var(--ink);
+}
+
 .composer-attachment-remove:hover:not(:disabled) {
 	background: rgba(12, 13, 14, 0.92);
 	box-shadow: none;
 	opacity: 1;
+}
+
+.composer-file-remove:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--panel) 62%, var(--ink));
+	color: var(--paper);
 }
 
 .composer-attachment-remove svg,

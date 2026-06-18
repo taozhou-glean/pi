@@ -68,6 +68,16 @@ type ComposerImageAttachment = {
 	objectUrl: string;
 };
 
+type ComposerFileAttachment = {
+	id: string;
+	path: string;
+	name: string;
+};
+
+type DesktopContextSelection =
+	| { type: "path"; path: string; name?: string }
+	| { type: "image"; path: string; name: string; data: string; mimeType: string };
+
 type PiDesktopApi = {
 	init(): Promise<DesktopState>;
 	getState(): Promise<DesktopState>;
@@ -79,7 +89,7 @@ type PiDesktopApi = {
 		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
 	): Promise<DesktopState>;
 	abort(): Promise<DesktopState>;
-	chooseContext(kind: "files" | "folder" | "workspace"): Promise<string[]>;
+	chooseContext(kind: "files" | "folder" | "workspace"): Promise<DesktopContextSelection[]>;
 	setCwd(cwd: string): Promise<DesktopState>;
 	listModels(): Promise<DesktopModel[]>;
 	setModel(provider: string, id: string): Promise<DesktopState>;
@@ -96,6 +106,7 @@ declare global {
 			renderMessages(messages: DesktopMessage[]): void;
 			renderState(next: DesktopState): void;
 			renderSessionList(): void;
+			applyContextSelections(selections: DesktopContextSelection[], options?: { attachPathChips?: boolean }): void;
 			sessions: DesktopSessionInfo[];
 		};
 	}
@@ -148,6 +159,7 @@ let state: DesktopState | undefined;
 let models: DesktopModel[] = [];
 let sessions: DesktopSessionInfo[] = [];
 let composerImages: ComposerImageAttachment[] = [];
+let composerFiles: ComposerFileAttachment[] = [];
 let switchingSessionPath: string | undefined;
 let renderedSessionId: string | undefined;
 let visibleMessageLimit = 120;
@@ -617,17 +629,38 @@ function contentText(message: DesktopMessage): string {
 	return parts.join("\n\n") || message.text || "";
 }
 
+function splitVisibleTextAndContextPaths(text: string): { text: string; paths: string[] } {
+	const lines = text.split("\n");
+	const markerIndex = lines.findIndex(
+		(line) => line.trim() === "Use this path as context:" || line.trim() === "Use these paths as context:",
+	);
+	if (markerIndex === -1) return { text, paths: [] };
+
+	const paths: string[] = [];
+	for (let index = markerIndex + 1; index < lines.length; index++) {
+		const line = lines[index] ?? "";
+		const match = /^\s*-\s+(.+?)\s*$/.exec(line);
+		if (match) {
+			paths.push(match[1]);
+			continue;
+		}
+		if (line.trim() !== "") break;
+	}
+	if (paths.length === 0) return { text, paths: [] };
+	return { text: lines.slice(0, markerIndex).join("\n").trimEnd(), paths };
+}
+
 function hasVisibleContent(message: DesktopMessage): boolean {
 	return Boolean(
 		contentText(message) || message.content.some((block) => block.type === "image") || message.toolCalls?.length,
 	);
 }
 
-function renderContent(message: DesktopMessage, options: { includeImages?: boolean } = {}): HTMLElement {
+function renderContent(message: DesktopMessage, options: { includeImages?: boolean; text?: string } = {}): HTMLElement {
 	const includeImages = options.includeImages ?? true;
 	const body = document.createElement("div");
 	body.className = "message-body markdown";
-	const text = contentText(message);
+	const text = options.text ?? contentText(message);
 	if (text) renderMarkdown(body, text);
 	if (!includeImages) return body;
 	for (const block of message.content) {
@@ -671,6 +704,30 @@ function renderImageAttachments(message: DesktopMessage): HTMLElement | undefine
 	return strip;
 }
 
+function renderFileAttachments(paths: string[]): HTMLElement | undefined {
+	if (paths.length === 0) return undefined;
+
+	const strip = document.createElement("div");
+	strip.className = "message-attachments file-attachments";
+	for (const path of paths) {
+		const chip = document.createElement("div");
+		chip.className = "message-file-chip";
+		chip.title = path;
+
+		const icon = document.createElement("span");
+		icon.className = "message-file-chip-icon";
+		icon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h4" /></svg>`;
+
+		const name = document.createElement("span");
+		name.className = "message-file-chip-name";
+		name.textContent = basename(path);
+
+		chip.append(icon, name);
+		strip.append(chip);
+	}
+	return strip;
+}
+
 function renderToolInput(input: unknown): string {
 	if (input === undefined || input === null) return "";
 	if (typeof input === "string") return input;
@@ -686,9 +743,10 @@ function createMessage(message: DesktopMessage): HTMLElement {
 	row.className = `message ${message.role}`;
 
 	if (message.role === "user") {
+		const userContent = splitVisibleTextAndContextPaths(contentText(message));
 		row.classList.toggle(
 			"has-attachments",
-			message.content.some((block) => block.type === "image"),
+			message.content.some((block) => block.type === "image") || userContent.paths.length > 0,
 		);
 		const meta = document.createElement("div");
 		meta.className = "message-hover-meta";
@@ -706,9 +764,13 @@ function createMessage(message: DesktopMessage): HTMLElement {
 		meta.append(time);
 		const bubble = document.createElement("div");
 		bubble.className = "message-user-bubble";
-		const body = renderContent(message, { includeImages: false });
+		const body = renderContent(message, { includeImages: false, text: userContent.text });
 		if (body.hasChildNodes()) {
 			bubble.append(body);
+		}
+		const fileAttachments = renderFileAttachments(userContent.paths);
+		if (fileAttachments) {
+			row.append(fileAttachments);
 		}
 		const attachments = renderImageAttachments(message);
 		if (attachments) {
@@ -836,6 +898,7 @@ window.__piDesktopTest = {
 	renderMessages,
 	renderState,
 	renderSessionList,
+	applyContextSelections,
 	get sessions() {
 		return sessions;
 	},
@@ -1144,7 +1207,8 @@ function autosizePrompt(): void {
 
 function syncSendButtonState(): void {
 	sendButton.disabled =
-		Boolean(state?.isStreaming) || (promptInput.value.trim().length === 0 && composerImages.length === 0);
+		Boolean(state?.isStreaming) ||
+		(promptInput.value.trim().length === 0 && composerImages.length === 0 && composerFiles.length === 0);
 }
 
 function closeImagePreview(): void {
@@ -1222,7 +1286,7 @@ function openImagePreview(attachment: ComposerImageAttachment): void {
 
 function renderComposerAttachments(): void {
 	composerAttachments.replaceChildren();
-	composerAttachments.hidden = composerImages.length === 0;
+	composerAttachments.hidden = composerImages.length === 0 && composerFiles.length === 0;
 	for (const attachment of composerImages) {
 		const item = document.createElement("div");
 		item.className = "composer-attachment";
@@ -1257,15 +1321,55 @@ function renderComposerAttachments(): void {
 		item.append(preview, remove);
 		composerAttachments.append(item);
 	}
+	for (const attachment of composerFiles) {
+		const item = document.createElement("div");
+		item.className = "composer-file-attachment";
+
+		const icon = document.createElement("div");
+		icon.className = "composer-file-icon";
+		icon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h4" /></svg>`;
+
+		const meta = document.createElement("div");
+		meta.className = "composer-file-meta";
+		const name = document.createElement("div");
+		name.className = "composer-file-name";
+		name.textContent = attachment.name;
+		const type = document.createElement("div");
+		type.className = "composer-file-type";
+		type.textContent = fileTypeLabel(attachment.name);
+		meta.append(name, type);
+
+		const remove = document.createElement("button");
+		remove.type = "button";
+		remove.className = "composer-attachment-remove composer-file-remove";
+		remove.title = `Remove ${attachment.name}`;
+		remove.setAttribute("aria-label", `Remove ${attachment.name}`);
+		remove.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7" /><path d="m11.5 4.5-7 7" /></svg>`;
+		remove.addEventListener("click", () => {
+			composerFiles = composerFiles.filter((candidate) => candidate.id !== attachment.id);
+			renderComposerAttachments();
+			syncSendButtonState();
+			promptInput.focus();
+		});
+
+		item.append(icon, meta, remove);
+		composerAttachments.append(item);
+	}
 	syncSendButtonState();
 }
 
-function clearComposerImages(): void {
+function clearComposerAttachments(): void {
 	for (const attachment of composerImages) {
 		URL.revokeObjectURL(attachment.objectUrl);
 	}
 	composerImages = [];
+	composerFiles = [];
 	renderComposerAttachments();
+}
+
+function fileTypeLabel(name: string): string {
+	const extension = name.includes(".") ? name.split(".").pop()?.trim() : "";
+	return extension ? extension.toUpperCase() : "FILE";
 }
 
 function readImageAttachment(file: File): Promise<ComposerImageAttachment> {
@@ -1308,6 +1412,30 @@ async function addComposerImageFiles(files: File[]): Promise<void> {
 	renderComposerAttachments();
 }
 
+function addComposerImageSelections(selections: Extract<DesktopContextSelection, { type: "image" }>[]): void {
+	if (selections.length === 0) return;
+	const attachments = selections.map((selection) => ({
+		id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		data: selection.data,
+		mimeType: selection.mimeType,
+		name: selection.name,
+		objectUrl: `data:${selection.mimeType};base64,${selection.data}`,
+	}));
+	composerImages = [...composerImages, ...attachments];
+	renderComposerAttachments();
+}
+
+function addComposerFileSelections(selections: Extract<DesktopContextSelection, { type: "path" }>[]): void {
+	if (selections.length === 0) return;
+	const attachments = selections.map((selection) => ({
+		id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		path: selection.path,
+		name: selection.name || basename(selection.path),
+	}));
+	composerFiles = [...composerFiles, ...attachments];
+	renderComposerAttachments();
+}
+
 function insertComposerContext(paths: string[]): void {
 	if (paths.length === 0) return;
 	const block = [
@@ -1321,21 +1449,55 @@ function insertComposerContext(paths: string[]): void {
 	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
 }
 
+function contextTextForPaths(paths: string[]): string {
+	if (paths.length === 0) return "";
+	return [
+		paths.length === 1 ? "Use this path as context:" : "Use these paths as context:",
+		...paths.map((path) => `- ${path}`),
+	].join("\n");
+}
+
+function messageWithFileContext(message: string): string {
+	const context = contextTextForPaths(composerFiles.map((file) => file.path));
+	if (!context) return message;
+	return message ? `${message}\n\n${context}` : context;
+}
+
+function applyContextSelections(
+	selections: DesktopContextSelection[],
+	options: { attachPathChips?: boolean } = {},
+): void {
+	addComposerImageSelections(
+		selections.filter(
+			(selection): selection is Extract<DesktopContextSelection, { type: "image" }> => selection.type === "image",
+		),
+	);
+	const paths = selections.filter(
+		(selection): selection is Extract<DesktopContextSelection, { type: "path" }> => selection.type === "path",
+	);
+	if (options.attachPathChips) {
+		addComposerFileSelections(paths);
+	} else {
+		insertComposerContext(paths.map((selection) => selection.path));
+	}
+}
+
 composer.addEventListener("submit", async (event) => {
 	event.preventDefault();
 	const message = promptInput.value.trim();
-	if (!message && composerImages.length === 0) return;
+	if (!message && composerImages.length === 0 && composerFiles.length === 0) return;
 	const images = composerImages.map((image) => ({
 		type: "image" as const,
 		data: image.data,
 		mimeType: image.mimeType,
 	}));
 	promptInput.value = "";
-	clearComposerImages();
+	const promptText = messageWithFileContext(message);
+	clearComposerAttachments();
 	autosizePrompt();
 	setBusy(true);
 	try {
-		renderState(await window.piDesktop.prompt({ text: message, images }));
+		renderState(await window.piDesktop.prompt({ text: promptText, images }));
 		await refreshSessions();
 	} catch (error) {
 		showError(error);
@@ -1479,7 +1641,7 @@ composerAddMenu.addEventListener("click", async (event) => {
 	const kind = button.dataset.contextKind as "files" | "folder" | "workspace";
 	try {
 		closeComposerMenus();
-		insertComposerContext(await window.piDesktop.chooseContext(kind));
+		applyContextSelections(await window.piDesktop.chooseContext(kind), { attachPathChips: kind === "files" });
 	} catch (error) {
 		showError(error);
 	}
