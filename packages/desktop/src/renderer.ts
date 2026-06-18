@@ -38,6 +38,12 @@ type DesktopToolCall = {
 	input?: unknown;
 };
 
+type DesktopToolExecutionEndEvent = {
+	type: "tool_execution_end";
+	toolCallId?: string;
+	isError?: boolean;
+};
+
 type DesktopModel = {
 	provider: string;
 	id: string;
@@ -191,6 +197,7 @@ let composerImages: ComposerImageAttachment[] = [];
 let composerFiles: ComposerFileAttachment[] = [];
 let switchingSessionPath: string | undefined;
 let renderedSessionId: string | undefined;
+const completedToolExecutions = new Map<string, { isError: boolean }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
 let selectedSlashCommandIndex = 0;
@@ -722,9 +729,10 @@ function formatToolLabel(name: string): string {
 	return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
-function toolStateLabel(result: DesktopMessage | undefined): string {
-	if (!result) return "Running";
-	return result.isError ? "Failed" : "Completed";
+function toolStateLabel(result: DesktopMessage | undefined, execution?: { isError: boolean }): string {
+	if (result) return result.isError ? "Failed" : "Completed";
+	if (execution) return execution.isError ? "Failed" : "Completed";
+	return "Running";
 }
 
 function appendInlineMarkdown(parent: HTMLElement, text: string): void {
@@ -1098,9 +1106,14 @@ function createMessage(message: DesktopMessage): HTMLElement {
 	return row;
 }
 
-function createToolGroup(call: DesktopToolCall, result: DesktopMessage | undefined, collapsed: boolean): HTMLElement {
+function createToolGroup(
+	call: DesktopToolCall,
+	result: DesktopMessage | undefined,
+	execution: { isError: boolean } | undefined,
+	collapsed: boolean,
+): HTMLElement {
 	const details = document.createElement("details");
-	details.className = `tool-group ${result?.isError ? "error" : ""}`;
+	details.className = `tool-group ${result?.isError || execution?.isError ? "error" : ""}`;
 	details.open = !collapsed;
 
 	const summary = document.createElement("summary");
@@ -1109,7 +1122,7 @@ function createToolGroup(call: DesktopToolCall, result: DesktopMessage | undefin
 	name.textContent = formatToolLabel(call.name);
 	const stateLabel = document.createElement("span");
 	stateLabel.className = "tool-state";
-	stateLabel.textContent = toolStateLabel(result);
+	stateLabel.textContent = toolStateLabel(result, execution);
 	summary.append(name, stateLabel);
 	details.append(summary);
 
@@ -1137,6 +1150,7 @@ function renderMessages(messages: DesktopMessage[]): void {
 	messagesEl.innerHTML = "";
 	if (sessionChanged) {
 		renderedSessionId = state?.sessionId;
+		completedToolExecutions.clear();
 		visibleMessageLimit = messagePageSize;
 		shouldFollowMessages = true;
 	}
@@ -1178,7 +1192,8 @@ function renderMessages(messages: DesktopMessage[]): void {
 				});
 				const result = resultIndex === -1 ? undefined : messages[resultIndex];
 				const hasNewerMessages = resultIndex !== -1 && resultIndex < messages.length - 1;
-				tools.append(createToolGroup(call, result, hasNewerMessages));
+				const execution = result ? undefined : completedToolExecutions.get(call.id);
+				tools.append(createToolGroup(call, result, execution, hasNewerMessages || Boolean(execution)));
 			}
 			row.append(tools);
 		}
@@ -2053,7 +2068,6 @@ settingsLogoutButton.addEventListener("click", async () => {
 		const result = await window.piDesktop.logout();
 		renderState(result.state);
 		await refreshModels();
-		showDesktopMessage("Logout", result.message);
 	} catch (error) {
 		showError(error);
 	}
@@ -2067,7 +2081,6 @@ loginButton.addEventListener("click", async () => {
 		renderState(result.state);
 		await refreshAfterSessionChange();
 		loginStatus.textContent = "";
-		showDesktopMessage("Login", result.message);
 	} catch (error) {
 		loginStatus.textContent = error instanceof Error ? error.message : String(error);
 		showError(error);
@@ -2079,7 +2092,11 @@ loginButton.addEventListener("click", async () => {
 window.piDesktop.onState(renderState);
 window.piDesktop.onMessages(renderMessages);
 window.piDesktop.onEvent((event) => {
-	const typed = event as { type?: string };
+	const typed = event as { type?: string } & DesktopToolExecutionEndEvent;
+	if (typed.type === "tool_execution_end" && typed.toolCallId) {
+		completedToolExecutions.set(typed.toolCallId, { isError: typed.isError === true });
+		window.piDesktop.getMessages().then(renderMessages).catch(showError);
+	}
 	if (typed.type === "agent_end") {
 		Promise.all([refreshGit(), refreshSessions()]).catch(showError);
 	}

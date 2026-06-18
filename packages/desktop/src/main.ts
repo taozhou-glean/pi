@@ -380,7 +380,10 @@ function handleSessionEvent(event: AgentSessionEvent): void {
 		event.type === "agent_start" ||
 		event.type === "queue_update" ||
 		event.type === "thinking_level_changed" ||
-		event.type === "session_info_changed"
+		event.type === "session_info_changed" ||
+		event.type === "tool_execution_start" ||
+		event.type === "tool_execution_update" ||
+		event.type === "tool_execution_end"
 	) {
 		send("pi:messages", serializeVisibleMessages());
 		publishState();
