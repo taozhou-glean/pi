@@ -158,11 +158,18 @@ const toggleBottomPanelButton = document.querySelector<HTMLButtonElement>("#togg
 const bottomPanel = document.querySelector<HTMLDivElement>("#bottom-panel")!;
 const terminalContainer = document.querySelector<HTMLDivElement>("#terminal-container")!;
 const rightTerminalContainer = document.querySelector<HTMLDivElement>("#right-terminal-container")!;
+const terminalCloseButton = document.querySelector<HTMLButtonElement>("#terminal-close")!;
 const rightPanelTabs = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-right-panel-tab]"));
 const rightPanelPanes = Array.from(document.querySelectorAll<HTMLElement>("[data-right-panel-pane]"));
+const bottomPanelTabs = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-bottom-panel-tab]"));
+const bottomPanelPanes = Array.from(document.querySelectorAll<HTMLElement>("[data-bottom-panel-pane]"));
 const browserUrlInput = document.querySelector<HTMLInputElement>("#browser-url")!;
 const browserGoButton = document.querySelector<HTMLButtonElement>("#browser-go")!;
 const browserFrame = document.querySelector<HTMLElement>("#browser-frame")!;
+const bottomBrowserBar = document.querySelector<HTMLDivElement>(".bottom-browser-bar")!;
+const bottomBrowserUrlInput = document.querySelector<HTMLInputElement>("#bottom-browser-url")!;
+const bottomBrowserGoButton = document.querySelector<HTMLButtonElement>("#bottom-browser-go")!;
+const bottomBrowserFrame = document.querySelector<HTMLElement>("#bottom-browser-frame")!;
 const bottomResizer = document.querySelector<HTMLDivElement>("#bottom-resizer")!;
 const leftResizer = document.querySelector<HTMLDivElement>("#left-resizer")!;
 const rightResizer = document.querySelector<HTMLDivElement>("#right-resizer")!;
@@ -246,7 +253,8 @@ const autoExpandLeftWidth = 1140;
 
 type ThemePreference = "system" | "light" | "dark";
 
-type RightPanelTab = "inspector" | "terminal" | "browser";
+type WindowPanelTab = "terminal" | "browser";
+type RightPanelTab = "inspector" | WindowPanelTab;
 
 type LayoutState = {
 	leftWidth: number;
@@ -256,6 +264,7 @@ type LayoutState = {
 	bottomHeight: number;
 	bottomCollapsed: boolean;
 	rightTab: RightPanelTab;
+	bottomTab: WindowPanelTab;
 };
 
 const layoutState: LayoutState = loadLayoutState();
@@ -279,8 +288,12 @@ function clamp(value: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, value));
 }
 
+function isWindowPanelTab(value: unknown): value is WindowPanelTab {
+	return value === "terminal" || value === "browser";
+}
+
 function isRightPanelTab(value: unknown): value is RightPanelTab {
-	return value === "inspector" || value === "terminal" || value === "browser";
+	return value === "inspector" || isWindowPanelTab(value);
 }
 
 function loadLayoutState(): LayoutState {
@@ -294,6 +307,7 @@ function loadLayoutState(): LayoutState {
 			bottomHeight: clamp(Number(parsed.bottomHeight) || 240, 120, 600),
 			bottomCollapsed: parsed.bottomCollapsed !== false,
 			rightTab: isRightPanelTab(parsed.rightTab) ? parsed.rightTab : "inspector",
+			bottomTab: isWindowPanelTab(parsed.bottomTab) ? parsed.bottomTab : "terminal",
 		};
 	} catch {
 		return {
@@ -304,6 +318,7 @@ function loadLayoutState(): LayoutState {
 			bottomHeight: 240,
 			bottomCollapsed: true,
 			rightTab: "inspector",
+			bottomTab: "terminal",
 		};
 	}
 }
@@ -334,6 +349,15 @@ function applyLayoutState(): void {
 	for (const pane of rightPanelPanes) {
 		pane.hidden = pane.dataset.rightPanelPane !== layoutState.rightTab;
 	}
+	for (const tab of bottomPanelTabs) {
+		const active = tab.dataset.bottomPanelTab === layoutState.bottomTab;
+		tab.classList.toggle("active", active);
+		tab.setAttribute("aria-selected", String(active));
+	}
+	for (const pane of bottomPanelPanes) {
+		pane.hidden = pane.dataset.bottomPanelPane !== layoutState.bottomTab;
+	}
+	bottomBrowserBar.hidden = layoutState.bottomCollapsed || layoutState.bottomTab !== "browser";
 	bottomPanel.hidden = layoutState.bottomCollapsed;
 }
 
@@ -2054,18 +2078,23 @@ for (const button of toggleLeftPanelButtons) {
 
 toggleRightPanelButton.addEventListener("click", () => {
 	togglePanel("right");
+	syncRightPanelContent();
 });
 
 // Right panel tabs and terminal/browser panes
 let term: Terminal | undefined;
 let fitAddon: FitAddon | undefined;
-let terminalDataUnsub: (() => void) | undefined;
 let terminalResizeObserver: ResizeObserver | undefined;
 let terminalCreated = false;
 
 function rightPanelTabFromDataset(button: HTMLButtonElement): RightPanelTab | undefined {
 	const tab = button.dataset.rightPanelTab;
 	return isRightPanelTab(tab) ? tab : undefined;
+}
+
+function bottomPanelTabFromDataset(button: HTMLButtonElement): WindowPanelTab | undefined {
+	const tab = button.dataset.bottomPanelTab;
+	return isWindowPanelTab(tab) ? tab : undefined;
 }
 
 function resizeTerminal(): void {
@@ -2093,7 +2122,7 @@ function createTerminal(): void {
 	term.onData((data) => {
 		window.piDesktop.terminalWrite(data);
 	});
-	terminalDataUnsub = window.piDesktop.onTerminalData((data) => {
+	window.piDesktop.onTerminalData((data) => {
 		term?.write(data);
 	});
 	terminalResizeObserver = new ResizeObserver(resizeTerminal);
@@ -2119,19 +2148,36 @@ function mountTerminal(host: HTMLElement): void {
 	}, 0);
 }
 
-function resetTerminal(host: HTMLElement): void {
-	terminalDataUnsub?.();
-	terminalDataUnsub = undefined;
-	terminalResizeObserver?.disconnect();
-	terminalResizeObserver = undefined;
-	term?.dispose();
-	term = undefined;
-	fitAddon = undefined;
-	terminalCreated = false;
-	window.piDesktop
-		.terminalDestroy()
-		.then(() => mountTerminal(host))
-		.catch(showError);
+function openBrowserUrl(value: string, input: HTMLInputElement, frame: HTMLElement): void {
+	const trimmed = value.trim();
+	if (!trimmed) return;
+	const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+	input.value = url.href;
+	frame.setAttribute("src", url.href);
+}
+
+function ensureBrowserLoaded(input: HTMLInputElement, frame: HTMLElement): void {
+	if (frame.getAttribute("src") === "about:blank") {
+		openBrowserUrl(input.value, input, frame);
+	}
+}
+
+function syncRightPanelContent(): void {
+	if (layoutState.rightCollapsed) return;
+	if (layoutState.rightTab === "terminal") {
+		mountTerminal(rightTerminalContainer);
+	} else if (layoutState.rightTab === "browser") {
+		ensureBrowserLoaded(browserUrlInput, browserFrame);
+	}
+}
+
+function syncBottomPanelContent(): void {
+	if (layoutState.bottomCollapsed) return;
+	if (layoutState.bottomTab === "terminal") {
+		mountTerminal(terminalContainer);
+	} else {
+		ensureBrowserLoaded(bottomBrowserUrlInput, bottomBrowserFrame);
+	}
 }
 
 function setRightPanelTab(tab: RightPanelTab): void {
@@ -2139,11 +2185,15 @@ function setRightPanelTab(tab: RightPanelTab): void {
 	layoutState.rightCollapsed = false;
 	applyLayoutState();
 	saveLayoutState();
-	if (tab === "terminal") {
-		mountTerminal(rightTerminalContainer);
-	} else if (tab === "browser" && browserFrame.getAttribute("src") === "about:blank") {
-		openBrowserUrl(browserUrlInput.value);
-	}
+	syncRightPanelContent();
+}
+
+function setBottomPanelTab(tab: WindowPanelTab): void {
+	layoutState.bottomTab = tab;
+	layoutState.bottomCollapsed = false;
+	applyLayoutState();
+	saveLayoutState();
+	syncBottomPanelContent();
 }
 
 function toggleBottomPanel(): void {
@@ -2151,18 +2201,10 @@ function toggleBottomPanel(): void {
 	applyLayoutState();
 	saveLayoutState();
 	if (!layoutState.bottomCollapsed) {
-		mountTerminal(terminalContainer);
-	} else if (!layoutState.rightCollapsed && layoutState.rightTab === "terminal") {
-		mountTerminal(rightTerminalContainer);
+		syncBottomPanelContent();
+	} else {
+		syncRightPanelContent();
 	}
-}
-
-function openBrowserUrl(value: string): void {
-	const trimmed = value.trim();
-	if (!trimmed) return;
-	const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-	browserUrlInput.value = url.href;
-	browserFrame.setAttribute("src", url.href);
 }
 
 for (const tab of rightPanelTabs) {
@@ -2172,28 +2214,25 @@ for (const tab of rightPanelTabs) {
 	});
 }
 
+for (const tab of bottomPanelTabs) {
+	tab.addEventListener("click", () => {
+		const nextTab = bottomPanelTabFromDataset(tab);
+		if (nextTab) setBottomPanelTab(nextTab);
+	});
+}
+
 toggleBottomPanelButton.addEventListener("click", toggleBottomPanel);
 
-document.querySelector<HTMLButtonElement>("#terminal-close")!.addEventListener("click", () => {
+terminalCloseButton.addEventListener("click", () => {
 	layoutState.bottomCollapsed = true;
 	applyLayoutState();
 	saveLayoutState();
-	if (!layoutState.rightCollapsed && layoutState.rightTab === "terminal") {
-		mountTerminal(rightTerminalContainer);
-	}
-});
-
-document.querySelector<HTMLButtonElement>("#terminal-new-tab")!.addEventListener("click", () => {
-	resetTerminal(terminalContainer);
-});
-
-document.querySelector<HTMLButtonElement>("#right-terminal-new")!.addEventListener("click", () => {
-	resetTerminal(rightTerminalContainer);
+	syncRightPanelContent();
 });
 
 browserGoButton.addEventListener("click", () => {
 	try {
-		openBrowserUrl(browserUrlInput.value);
+		openBrowserUrl(browserUrlInput.value, browserUrlInput, browserFrame);
 	} catch (error) {
 		showError(error);
 	}
@@ -2203,7 +2242,25 @@ browserUrlInput.addEventListener("keydown", (event) => {
 	if (event.key !== "Enter") return;
 	event.preventDefault();
 	try {
-		openBrowserUrl(browserUrlInput.value);
+		openBrowserUrl(browserUrlInput.value, browserUrlInput, browserFrame);
+	} catch (error) {
+		showError(error);
+	}
+});
+
+bottomBrowserGoButton.addEventListener("click", () => {
+	try {
+		openBrowserUrl(bottomBrowserUrlInput.value, bottomBrowserUrlInput, bottomBrowserFrame);
+	} catch (error) {
+		showError(error);
+	}
+});
+
+bottomBrowserUrlInput.addEventListener("keydown", (event) => {
+	if (event.key !== "Enter") return;
+	event.preventDefault();
+	try {
+		openBrowserUrl(bottomBrowserUrlInput.value, bottomBrowserUrlInput, bottomBrowserFrame);
 	} catch (error) {
 		showError(error);
 	}
@@ -2393,6 +2450,8 @@ window.piDesktop.onEvent((event) => {
 async function boot(): Promise<void> {
 	applyLayoutState();
 	syncResponsiveLayout();
+	syncRightPanelContent();
+	syncBottomPanelContent();
 	applyTheme();
 	renderState(await window.piDesktop.init());
 	await refreshAfterSessionChange();

@@ -240,7 +240,7 @@
 				</main>
 
 				<div class="actions">
-					<button id="toggle-bottom-panel" class="chrome-button" title="Toggle terminal (⌘J)" aria-label="Toggle terminal">
+					<button id="toggle-bottom-panel" class="chrome-button" title="Toggle bottom panel (⌘J)" aria-label="Toggle bottom panel">
 						<svg viewBox="0 0 24 24" aria-hidden="true">
 							<rect x="4" y="4" width="16" height="16" rx="3" />
 							<path d="M4 14h16" />
@@ -308,9 +308,6 @@
 						<section class="inspector-pane terminal-pane" data-right-panel-pane="terminal" hidden>
 							<div class="right-pane-header">
 								<span>Terminal</span>
-								<button id="right-terminal-new" class="icon-button" title="New terminal" aria-label="New terminal">
-									<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
-								</button>
 							</div>
 							<div id="right-terminal-container" class="terminal-container right-terminal-container"></div>
 						</section>
@@ -327,17 +324,34 @@
 				</aside>
 
 			<div id="bottom-panel" class="bottom-panel" hidden>
-				<div id="bottom-resizer" class="resizer bottom-resizer" role="separator" aria-label="Resize terminal" tabindex="0"></div>
+				<div id="bottom-resizer" class="resizer bottom-resizer" role="separator" aria-label="Resize bottom panel" tabindex="0"></div>
 				<div class="bottom-panel-header">
-					<span class="bottom-panel-title">Terminal</span>
-					<button id="terminal-new-tab" class="icon-button" title="New terminal" aria-label="New terminal">
-						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
-					</button>
-					<button id="terminal-close" class="icon-button" title="Close terminal" aria-label="Close terminal">
+					<nav class="bottom-panel-tabs" aria-label="Bottom panel tabs">
+						<button class="bottom-panel-tab" type="button" data-bottom-panel-tab="terminal">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 8 4 4-4 4" /><path d="M13 16h5" /></svg>
+							<span>Terminal</span>
+						</button>
+						<button class="bottom-panel-tab" type="button" data-bottom-panel-tab="browser">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M4 12h16" /><path d="M12 4a12 12 0 0 1 0 16" /><path d="M12 4a12 12 0 0 0 0 16" /></svg>
+							<span>Browser</span>
+						</button>
+					</nav>
+					<button id="terminal-close" class="icon-button" title="Close bottom panel" aria-label="Close bottom panel">
 						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
 					</button>
 				</div>
-				<div id="terminal-container" class="terminal-container"></div>
+				<section class="bottom-panel-pane terminal-pane" data-bottom-panel-pane="terminal">
+					<div id="terminal-container" class="terminal-container"></div>
+				</section>
+				<section class="bottom-panel-pane browser-pane" data-bottom-panel-pane="browser" hidden>
+					<div class="browser-bar bottom-browser-bar" hidden>
+						<input id="bottom-browser-url" type="url" value="https://www.google.com" aria-label="Bottom browser URL" />
+						<button id="bottom-browser-go" class="icon-button" title="Open URL" aria-label="Open URL">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>
+						</button>
+					</div>
+					<webview id="bottom-browser-frame" class="browser-frame" src="about:blank"></webview>
+				</section>
 			</div>
 		</div>
 		<script type="module" src="./renderer.js"></script>
