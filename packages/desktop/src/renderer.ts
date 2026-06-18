@@ -486,6 +486,7 @@ const slashCommands: SlashCommand[] = [
 		description: "Compact the current chat context",
 		run: async (args) => {
 			renderState(await window.piDesktop.compact(args));
+			renderMessages(await window.piDesktop.getMessages());
 		},
 	},
 	{
@@ -1410,10 +1411,17 @@ function renderSessionList(): void {
 			titleEl.textContent = title;
 			const metaEl = document.createElement("span");
 			metaEl.className = "session-item-meta";
-			metaEl.textContent =
-				session.path === switchingSessionPath
-					? "Loading..."
-					: `${session.messageCount} messages · ${formatRelative(session.modified)}`;
+			if (session.path === switchingSessionPath) {
+				metaEl.textContent = "Loading...";
+			} else {
+				const timeSpan = document.createElement("span");
+				timeSpan.className = "session-item-time";
+				timeSpan.textContent = formatRelative(session.modified);
+				const msgSpan = document.createElement("span");
+				msgSpan.className = "session-item-messages";
+				msgSpan.textContent = `${session.messageCount} msg`;
+				metaEl.append(timeSpan, msgSpan);
+			}
 			button.append(titleEl, metaEl);
 			button.addEventListener("click", async () => {
 				try {

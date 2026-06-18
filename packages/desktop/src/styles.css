@@ -670,7 +670,8 @@ select:focus {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin: 13px 4px 4px;
+	margin: 13px 0 4px;
+	padding: 0 10px;
 	color: var(--nav-muted);
 	font-size: 13px;
 	font-weight: 580;
@@ -703,13 +704,12 @@ select:focus {
 
 .session-item {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	column-gap: 0;
-	row-gap: 1px;
+	grid-template-columns: minmax(0, 1fr) auto;
+	column-gap: 8px;
 	align-items: center;
 	width: 100%;
-	min-height: 42px;
-	padding: 6px 10px;
+	min-height: 32px;
+	padding: 4px 10px 4px 36px;
 	text-align: left;
 	background: transparent;
 	color: var(--nav-text);
@@ -741,7 +741,7 @@ select:focus {
 .session-pagination {
 	display: flex;
 	gap: 14px;
-	margin: 2px 4px 7px 30px;
+	margin: 2px 4px 7px 36px;
 }
 
 .session-pagination-button {
@@ -767,10 +767,28 @@ select:focus {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-size: 13px;
-	font-weight: 620;
+	font-weight: 480;
 }
 
-.session-item-meta,
+.session-item-meta {
+	color: color-mix(in srgb, var(--nav-muted) 78%, transparent);
+	font-size: 11px;
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.session-item .session-item-messages {
+	display: none;
+}
+
+.session-item:hover .session-item-messages {
+	display: inline;
+}
+
+.session-item:hover .session-item-time {
+	display: none;
+}
+
 .session-empty {
 	color: color-mix(in srgb, var(--nav-muted) 78%, transparent);
 	font-size: 11px;

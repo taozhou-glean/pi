@@ -383,7 +383,8 @@ function handleSessionEvent(event: AgentSessionEvent): void {
 		event.type === "session_info_changed" ||
 		event.type === "tool_execution_start" ||
 		event.type === "tool_execution_update" ||
-		event.type === "tool_execution_end"
+		event.type === "tool_execution_end" ||
+		event.type === "compaction_end"
 	) {
 		send("pi:messages", serializeVisibleMessages());
 		publishState();
