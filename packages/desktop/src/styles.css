@@ -205,10 +205,6 @@ button:disabled {
 	box-shadow: none;
 }
 
-#abort:disabled {
-	display: none;
-}
-
 #app {
 	display: grid;
 	position: relative;

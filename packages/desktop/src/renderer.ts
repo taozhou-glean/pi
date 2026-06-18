@@ -176,7 +176,6 @@ const loginStatus = document.querySelector<HTMLDivElement>("#login-status")!;
 const composer = document.querySelector<HTMLFormElement>("#composer")!;
 const promptInput = document.querySelector<HTMLTextAreaElement>("#prompt")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
-const abortButton = document.querySelector<HTMLButtonElement>("#abort")!;
 const composerAttachments = document.createElement("div");
 composerAttachments.className = "composer-attachments";
 composerAttachments.hidden = true;
@@ -704,7 +703,6 @@ function scrollMessagesToBottom(): void {
 }
 
 function setBusy(isBusy: boolean): void {
-	abortButton.disabled = !isBusy;
 	sendButton.setAttribute("aria-label", isBusy ? "Working" : "Send");
 	runState.textContent = isBusy ? "Running" : "Idle";
 	runState.className = `run-state ${isBusy ? "running" : "idle"}`;
@@ -1885,14 +1883,6 @@ messagesEl.addEventListener("scroll", () => {
 imagePreviewOverlay.addEventListener("click", (event) => {
 	if (event.target === imagePreviewOverlay) {
 		closeImagePreview();
-	}
-});
-
-abortButton.addEventListener("click", async () => {
-	try {
-		renderState(await window.piDesktop.abort());
-	} catch (error) {
-		showError(error);
 	}
 });
 
