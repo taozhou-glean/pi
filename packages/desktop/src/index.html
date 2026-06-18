@@ -153,6 +153,21 @@
 					</div>
 				</section>
 
+				<section id="login-screen" class="login-screen" hidden>
+					<div class="login-panel">
+						<div class="login-icon" aria-hidden="true">
+							<svg viewBox="0 0 24 24">
+								<path d="M12 3 4.5 7v5.5c0 4.4 3 7.1 7.5 8.5 4.5-1.4 7.5-4.1 7.5-8.5V7L12 3Z" />
+								<path d="M9.5 12.5 11 14l3.5-4" />
+							</svg>
+						</div>
+						<h2>Sign in to Pi</h2>
+						<p>Connect your Glean account to load models and start chatting.</p>
+						<button id="login-button" type="button">Sign in with Glean</button>
+						<div id="login-status" class="login-status"></div>
+					</div>
+				</section>
+
 				<section id="messages" class="messages"></section>
 
 				<form id="composer" class="composer">

@@ -15,7 +15,7 @@ import {
 	type SessionInfo,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions, shell } from "electron";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -67,9 +67,16 @@ type DesktopState = {
 	sessionName?: string;
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
+	authRequired: boolean;
+	availableModelCount: number;
 	isStreaming: boolean;
 	pendingMessageCount: number;
 	messageCount: number;
+};
+
+type DesktopLoginResult = {
+	state: DesktopState;
+	message: string;
 };
 
 type DesktopSessionInfo = {
@@ -334,7 +341,10 @@ async function serializeContextSelections(paths: string[]): Promise<DesktopConte
 function serializeState(): DesktopState {
 	const session = getSession();
 	const model = session.model;
-	const hasRealModel = Boolean(model && model.provider !== "unknown" && model.id !== "unknown");
+	const hasRealModel = Boolean(
+		model && model.provider !== "unknown" && model.id !== "unknown" && session.modelRegistry.hasConfiguredAuth(model),
+	);
+	const availableModelCount = session.modelRegistry.getAvailable().length;
 	return {
 		cwd: currentCwd,
 		sessionDir: getSession().sessionManager.getSessionDir(),
@@ -343,6 +353,8 @@ function serializeState(): DesktopState {
 		sessionName: session.sessionManager.getSessionName(),
 		model: hasRealModel && model ? { provider: model.provider, id: model.id } : undefined,
 		thinkingLevel: session.thinkingLevel,
+		authRequired: availableModelCount === 0,
+		availableModelCount,
 		isStreaming: session.isStreaming,
 		pendingMessageCount: session.pendingMessageCount,
 		messageCount: session.messages.length,
@@ -522,6 +534,28 @@ async function createWindow(): Promise<void> {
 						window.__piDesktopTest.renderState(state);
 						window.__piDesktopTest.sessions = sessions;
 						window.__piDesktopTest.renderSessionList();
+						window.__piDesktopTest.renderState({
+							...state,
+							model: undefined,
+							authRequired: true,
+							availableModelCount: 0,
+						});
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						const loginScreenVisible = document.querySelector("#login-screen")?.hidden === false;
+						const loginButtonText = document.querySelector("#login-button")?.textContent;
+						const composerHiddenForLogin = document.querySelector("#composer")?.hidden === true;
+						const messagesHiddenForLogin = document.querySelector("#messages")?.hidden === true;
+						const smokeState = {
+							...state,
+							model: state.model ?? { provider: "glean", id: "smoke-model" },
+							authRequired: false,
+							availableModelCount: Math.max(state.availableModelCount ?? 0, 1),
+						};
+						window.__piDesktopTest.renderState(smokeState);
+						await new Promise((resolve) => setTimeout(resolve, 0));
+						if (!loginScreenVisible || loginButtonText !== "Sign in with Glean" || !composerHiddenForLogin || !messagesHiddenForLogin) {
+							throw new Error("Login screen did not render for unauthenticated state");
+						}
 						const expectedProjectCount = new Set(sessions.map((session) => session.cwd)).size;
 						const renderedProjectCount = document.querySelectorAll(".session-group-heading").length;
 						const renderedSessionCount = document.querySelectorAll(".session-item").length;
@@ -590,22 +624,25 @@ async function createWindow(): Promise<void> {
 						addButton.click();
 						modelButton.click();
 						await new Promise((resolve) => setTimeout(resolve, 0));
-						const modelMenuOpened = modelMenu.hidden === false;
 						const modelMenuItemCount = modelMenu.querySelectorAll(".model-menu-item").length;
 						const modelOptionCount = modelMenu.querySelectorAll(".model-menu-item[data-value]").length;
-						const modelMenuHasActiveItem = modelMenu.querySelector(".model-menu-item.active") !== null;
-						const modelMenuHasReasoning = modelMenu.textContent.includes("Reasoning");
+						const hasModelOptions = modelOptionCount > 0;
+						const modelMenuOpened = hasModelOptions ? modelMenu.hidden === false : true;
+						const modelMenuHasActiveItem = hasModelOptions ? modelMenu.querySelector(".model-menu-item.active") !== null : true;
+						const modelMenuHasReasoning = hasModelOptions ? modelMenu.textContent.includes("Reasoning") : true;
 						const modelButtonHasCaret = getComputedStyle(modelButton, "::after").content !== "none";
 						const modelFilterInput = modelMenu.querySelector(".model-filter input");
-						if (!modelFilterInput) {
+						if (hasModelOptions && !modelFilterInput) {
 							throw new Error("Model menu is missing its filter input");
 						}
-						modelFilterInput.value = "claude";
-						modelFilterInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
+						if (modelFilterInput) {
+							modelFilterInput.value = "claude";
+							modelFilterInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
+						}
 						const visibleFilteredModels = Array.from(modelMenu.querySelectorAll(".model-menu-item[data-value]")).filter(
 							(item) => !item.hidden && getComputedStyle(item).display !== "none",
 						);
-						const modelFilterReducedResults = visibleFilteredModels.length < modelOptionCount;
+						const modelFilterReducedResults = hasModelOptions ? visibleFilteredModels.length < modelOptionCount : true;
 						const modelFilterMatchesQuery = visibleFilteredModels.every((item) =>
 							item.textContent.toLowerCase().includes("claude"),
 						);
@@ -829,9 +866,11 @@ async function createWindow(): Promise<void> {
 						prompt.value = "/model opus";
 						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
 						await new Promise((resolve) => setTimeout(resolve, 0));
-						const slashModelSearchOpen = document.querySelector(".slash-command-menu")?.hidden === false;
+						const slashModelSearchOpen = hasModelOptions ? document.querySelector(".slash-command-menu")?.hidden === false : true;
 						const slashModelSearchShowsMatch =
-							document.querySelector(".slash-command-menu")?.textContent?.toLowerCase().includes("opus") === true;
+							hasModelOptions
+								? document.querySelector(".slash-command-menu")?.textContent?.toLowerCase().includes("opus") === true
+								: true;
 						prompt.value = "/session";
 						prompt.dispatchEvent(new InputEvent("input", { bubbles: true }));
 						document.querySelector("#composer").requestSubmit();
@@ -1075,6 +1114,10 @@ async function createWindow(): Promise<void> {
 							renderedSessionCount,
 							paginationCount,
 							projectsNeedingPagination,
+							loginScreenVisible,
+							loginButtonText,
+							composerHiddenForLogin,
+							messagesHiddenForLogin,
 					modelText: document.querySelector("#composer-model")?.textContent,
 					userMessageText,
 					userMessageMetaHidden: userMessageMetaOpacity === "0",
@@ -1347,6 +1390,32 @@ ipcMain.handle("pi:reload-session", async () => {
 	await ensureDesktopSession();
 	await getSession().reload();
 	return serializeState();
+});
+ipcMain.handle("pi:login", async (): Promise<DesktopLoginResult> => {
+	await ensureDesktopSession();
+	const session = getSession();
+	const provider =
+		session.modelRegistry.authStorage.getOAuthProviders().find((candidate) => candidate.id === "glean") ??
+		session.modelRegistry.authStorage.getOAuthProviders()[0];
+	if (!provider) throw new Error("No OAuth login provider is available.");
+	await session.modelRegistry.authStorage.login(provider.id as never, {
+		onAuth: (info) => {
+			shell.openExternal(info.url).catch(() => {});
+		},
+		onDeviceCode: (info) => {
+			shell.openExternal(info.verificationUri).catch(() => {});
+		},
+		onPrompt: async () => "",
+		onProgress: () => {},
+		onManualCodeInput: () => new Promise<string>(() => {}),
+		onSelect: async (prompt) => prompt.options[0]?.id,
+	});
+	session.modelRegistry.refresh();
+	const availableModels = await session.modelRegistry.getAvailable();
+	if (availableModels.length > 0 && (!session.model || !session.modelRegistry.hasConfiguredAuth(session.model))) {
+		await session.setModel(availableModels[0]!);
+	}
+	return { state: serializeState(), message: `Logged in to ${provider.name}` };
 });
 ipcMain.handle("pi:logout", async () => {
 	await ensureDesktopSession();

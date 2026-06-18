@@ -795,6 +795,75 @@ select:focus {
 	background: var(--paper);
 }
 
+.login-screen {
+	display: grid;
+	place-items: center;
+	min-height: 0;
+	padding: 32px var(--chat-inset);
+	overflow: auto;
+}
+
+.login-screen[hidden] {
+	display: none;
+}
+
+.login-panel {
+	display: grid;
+	justify-items: center;
+	gap: 12px;
+	width: min(420px, 100%);
+	padding: 28px;
+	border: 1px solid var(--line-strong);
+	border-radius: 14px;
+	background: color-mix(in srgb, var(--panel) 94%, var(--paper));
+	box-shadow: 0 18px 50px var(--shadow);
+	text-align: center;
+}
+
+.login-icon {
+	display: grid;
+	place-items: center;
+	width: 44px;
+	height: 44px;
+	border-radius: 12px;
+	background: var(--accent-soft);
+	color: var(--accent-strong);
+}
+
+.login-icon svg {
+	width: 24px;
+	height: 24px;
+	fill: none;
+	stroke: currentColor;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 2;
+}
+
+.login-panel h2 {
+	margin: 0;
+	font-size: 22px;
+	letter-spacing: 0;
+}
+
+.login-panel p {
+	margin: 0;
+	color: var(--muted);
+	font-size: 14px;
+	line-height: 1.45;
+}
+
+#login-button {
+	width: 100%;
+	margin-top: 6px;
+}
+
+.login-status {
+	min-height: 17px;
+	color: var(--muted);
+	font-size: 12px;
+}
+
 .topbar {
 	display: flex;
 	align-items: center;

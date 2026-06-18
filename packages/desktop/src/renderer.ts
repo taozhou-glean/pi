@@ -6,6 +6,8 @@ type DesktopState = {
 	sessionName?: string;
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
+	authRequired: boolean;
+	availableModelCount: number;
 	isStreaming: boolean;
 	pendingMessageCount: number;
 	messageCount: number;
@@ -65,6 +67,11 @@ type DesktopLogoutResult = {
 	message: string;
 };
 
+type DesktopLoginResult = {
+	state: DesktopState;
+	message: string;
+};
+
 type ComposerImageAttachment = {
 	id: string;
 	data: string;
@@ -101,6 +108,7 @@ type PiDesktopApi = {
 	compact(customInstructions?: string): Promise<DesktopState>;
 	setSessionName(name: string): Promise<DesktopState>;
 	reloadSession(): Promise<DesktopState>;
+	login(): Promise<DesktopLoginResult>;
 	logout(): Promise<DesktopLogoutResult>;
 	quit(): Promise<void>;
 	gitStatus(): Promise<GitStatus>;
@@ -156,6 +164,9 @@ const messageCount = document.querySelector<HTMLElement>("#message-count")!;
 const queueCount = document.querySelector<HTMLElement>("#queue-count")!;
 const contextSummary = document.querySelector<HTMLDivElement>("#context-summary")!;
 const messagesEl = document.querySelector<HTMLElement>("#messages")!;
+const loginScreen = document.querySelector<HTMLElement>("#login-screen")!;
+const loginButton = document.querySelector<HTMLButtonElement>("#login-button")!;
+const loginStatus = document.querySelector<HTMLDivElement>("#login-status")!;
 const composer = document.querySelector<HTMLFormElement>("#composer")!;
 const promptInput = document.querySelector<HTMLTextAreaElement>("#prompt")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
@@ -1199,6 +1210,10 @@ window.__piDesktopTest = {
 
 function renderState(next: DesktopState): void {
 	state = next;
+	const requiresAuth = next.authRequired;
+	loginScreen.hidden = !requiresAuth;
+	messagesEl.hidden = requiresAuth;
+	composer.hidden = requiresAuth;
 	cwdInput.value = next.cwd;
 	updateSessionTitle();
 	const model = next.model ? `${next.model.provider}/${next.model.id}` : "No model selected";
@@ -1214,7 +1229,7 @@ function renderState(next: DesktopState): void {
 		<div><span>Working directory</span><strong>${next.cwd}</strong></div>
 		<div><span>Session store</span><strong>${next.sessionDir ?? "Default Pi session store"}</strong></div>
 		<div><span>Session file</span><strong>${next.sessionFile ?? "Not written yet"}</strong></div>
-		<div><span>Model</span><strong>${model}</strong></div>
+		<div><span>Model</span><strong>${requiresAuth ? "Login required" : model}</strong></div>
 	`;
 	setBusy(next.isStreaming);
 
@@ -1502,6 +1517,7 @@ function autosizePrompt(): void {
 function syncSendButtonState(): void {
 	sendButton.disabled =
 		Boolean(state?.isStreaming) ||
+		Boolean(state?.authRequired) ||
 		(promptInput.value.trim().length === 0 && composerImages.length === 0 && composerFiles.length === 0);
 }
 
@@ -2039,6 +2055,23 @@ settingsLogoutButton.addEventListener("click", async () => {
 		showDesktopMessage("Logout", result.message);
 	} catch (error) {
 		showError(error);
+	}
+});
+
+loginButton.addEventListener("click", async () => {
+	loginButton.disabled = true;
+	loginStatus.textContent = "Opening browser for Glean login...";
+	try {
+		const result = await window.piDesktop.login();
+		renderState(result.state);
+		await refreshAfterSessionChange();
+		loginStatus.textContent = "";
+		showDesktopMessage("Login", result.message);
+	} catch (error) {
+		loginStatus.textContent = error instanceof Error ? error.message : String(error);
+		showError(error);
+	} finally {
+		loginButton.disabled = false;
 	}
 });
 

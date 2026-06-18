@@ -17,6 +17,7 @@ const api = {
 	compact: (customInstructions?: string) => ipcRenderer.invoke("pi:compact", customInstructions),
 	setSessionName: (name: string) => ipcRenderer.invoke("pi:set-session-name", name),
 	reloadSession: () => ipcRenderer.invoke("pi:reload-session"),
+	login: () => ipcRenderer.invoke("pi:login"),
 	logout: () => ipcRenderer.invoke("pi:logout"),
 	quit: () => ipcRenderer.invoke("pi:quit"),
 	gitStatus: () => ipcRenderer.invoke("pi:git-status"),
