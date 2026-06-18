@@ -176,6 +176,17 @@ const loginStatus = document.querySelector<HTMLDivElement>("#login-status")!;
 const composer = document.querySelector<HTMLFormElement>("#composer")!;
 const promptInput = document.querySelector<HTMLTextAreaElement>("#prompt")!;
 const sendButton = document.querySelector<HTMLButtonElement>("#send")!;
+const sendButtonSendIcon = `
+	<svg viewBox="0 0 24 24" aria-hidden="true">
+		<path d="M12 19V5" />
+		<path d="m6 11 6-6 6 6" />
+	</svg>
+`;
+const sendButtonStopIcon = `
+	<svg viewBox="0 0 24 24" aria-hidden="true">
+		<rect x="7" y="7" width="10" height="10" rx="2" />
+	</svg>
+`;
 const composerAttachments = document.createElement("div");
 composerAttachments.className = "composer-attachments";
 composerAttachments.hidden = true;
@@ -200,6 +211,8 @@ const completedToolExecutions = new Map<string, { isError: boolean }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
 let selectedSlashCommandIndex = 0;
+let isComposerBusy = false;
+let isAbortingRun = false;
 const messagePageSize = 120;
 const projectSessionPageSize = 5;
 const projectSessionLimits = new Map<string, number>();
@@ -703,14 +716,13 @@ function scrollMessagesToBottom(): void {
 }
 
 function setBusy(isBusy: boolean): void {
-	sendButton.setAttribute("aria-label", isBusy ? "Working" : "Send");
+	isComposerBusy = isBusy;
+	sendButton.setAttribute("aria-label", isBusy ? "Stop" : "Send");
+	sendButton.title = isBusy ? "Stop" : "Send";
+	sendButton.innerHTML = isBusy ? sendButtonStopIcon : sendButtonSendIcon;
 	runState.textContent = isBusy ? "Running" : "Idle";
 	runState.className = `run-state ${isBusy ? "running" : "idle"}`;
-	if (isBusy) {
-		sendButton.disabled = true;
-	} else {
-		syncSendButtonState();
-	}
+	syncSendButtonState();
 }
 
 function roleLabel(role: string): string {
@@ -1529,8 +1541,11 @@ function autosizePrompt(): void {
 }
 
 function syncSendButtonState(): void {
+	if (isComposerBusy) {
+		sendButton.disabled = isAbortingRun || Boolean(state?.authRequired);
+		return;
+	}
 	sendButton.disabled =
-		Boolean(state?.isStreaming) ||
 		Boolean(state?.authRequired) ||
 		(promptInput.value.trim().length === 0 && composerImages.length === 0 && composerFiles.length === 0);
 }
@@ -1806,8 +1821,26 @@ function applyContextSelections(
 	}
 }
 
+async function abortCurrentRun(): Promise<void> {
+	if (isAbortingRun) return;
+	isAbortingRun = true;
+	syncSendButtonState();
+	try {
+		renderState(await window.piDesktop.abort());
+	} catch (error) {
+		showError(error);
+	} finally {
+		isAbortingRun = false;
+		setBusy(Boolean(state?.isStreaming));
+	}
+}
+
 composer.addEventListener("submit", async (event) => {
 	event.preventDefault();
+	if (isComposerBusy) {
+		await abortCurrentRun();
+		return;
+	}
 	const message = promptInput.value.trim();
 	if (!message && composerImages.length === 0 && composerFiles.length === 0) return;
 	if (message.startsWith("/")) {
