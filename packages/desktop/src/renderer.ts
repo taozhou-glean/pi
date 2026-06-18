@@ -1314,7 +1314,13 @@ function renderModels(): void {
 		filterModelMenu(filterInput.value);
 	});
 	composerModelMenu.append(filterWrap);
-	for (const model of models) {
+	const selectedValue = state?.model ? `${state.model.provider}:${state.model.id}` : "";
+	const sortedModels = [...models].sort((a, b) => {
+		const aSelected = `${a.provider}:${a.id}` === selectedValue ? 0 : 1;
+		const bSelected = `${b.provider}:${b.id}` === selectedValue ? 0 : 1;
+		return aSelected - bSelected;
+	});
+	for (const model of sortedModels) {
 		const option = document.createElement("option");
 		option.value = `${model.provider}:${model.id}`;
 		option.textContent = `${model.provider} / ${model.id}`;
@@ -2012,12 +2018,18 @@ composerModelButton.addEventListener("mousedown", (event) => {
 	event.preventDefault();
 	event.stopPropagation();
 	toggleComposerMenu(composerModelButton, composerModelMenu);
+	if (!composerModelMenu.hidden) {
+		composerModelMenu.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+	}
 });
 
 composerModelButton.addEventListener("click", (event) => {
 	event.stopPropagation();
 	if (event.detail === 0) {
 		toggleComposerMenu(composerModelButton, composerModelMenu);
+		if (!composerModelMenu.hidden) {
+			composerModelMenu.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+		}
 	}
 });
 
