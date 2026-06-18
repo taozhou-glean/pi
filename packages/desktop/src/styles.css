@@ -808,6 +808,11 @@ select:focus {
 	display: none;
 }
 
+#app.auth-required .messages,
+#app.auth-required .composer {
+	display: none;
+}
+
 .login-panel {
 	display: grid;
 	justify-items: center;

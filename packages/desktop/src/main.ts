@@ -545,6 +545,9 @@ async function createWindow(): Promise<void> {
 						const loginButtonText = document.querySelector("#login-button")?.textContent;
 						const composerHiddenForLogin = document.querySelector("#composer")?.hidden === true;
 						const messagesHiddenForLogin = document.querySelector("#messages")?.hidden === true;
+						const authRequiredClassApplied = document.querySelector("#app")?.classList.contains("auth-required") === true;
+						const composerDisplayForLogin = getComputedStyle(document.querySelector("#composer")).display;
+						const messagesDisplayForLogin = getComputedStyle(document.querySelector("#messages")).display;
 						const loginPanelRect = document.querySelector(".login-panel").getBoundingClientRect();
 						const mainVisibleRect = document.querySelector(".main").getBoundingClientRect();
 						const loginPanelVisible =
@@ -565,6 +568,9 @@ async function createWindow(): Promise<void> {
 							loginButtonText !== "Sign in with Glean" ||
 							!composerHiddenForLogin ||
 							!messagesHiddenForLogin ||
+							!authRequiredClassApplied ||
+							composerDisplayForLogin !== "none" ||
+							messagesDisplayForLogin !== "none" ||
 							!loginPanelVisible
 						) {
 							throw new Error("Login screen did not render for unauthenticated state");
@@ -1131,6 +1137,9 @@ async function createWindow(): Promise<void> {
 							loginButtonText,
 							composerHiddenForLogin,
 							messagesHiddenForLogin,
+							authRequiredClassApplied,
+							composerDisplayForLogin,
+							messagesDisplayForLogin,
 							loginPanelVisible,
 					modelText: document.querySelector("#composer-model")?.textContent,
 					userMessageText,

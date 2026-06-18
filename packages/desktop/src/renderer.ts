@@ -1211,6 +1211,7 @@ window.__piDesktopTest = {
 function renderState(next: DesktopState): void {
 	state = next;
 	const requiresAuth = next.authRequired;
+	appEl.classList.toggle("auth-required", requiresAuth);
 	loginScreen.hidden = !requiresAuth;
 	messagesEl.hidden = requiresAuth;
 	composer.hidden = requiresAuth;
