@@ -8,6 +8,11 @@ type DesktopState = {
 	sessionFile?: string;
 	sessionName?: string;
 	model?: { provider: string; id: string };
+	contextUsage?: {
+		tokens: number | null;
+		contextWindow: number;
+		percent: number | null;
+	};
 	thinkingLevel?: string;
 	availableThinkingLevels?: string[];
 	authRequired: boolean;
@@ -226,6 +231,10 @@ const sessionRenameInput = document.querySelector<HTMLInputElement>("#session-re
 const sessionRenameCancel = document.querySelector<HTMLButtonElement>("#session-rename-cancel")!;
 const composerAddButton = document.querySelector<HTMLButtonElement>("#composer-add")!;
 const composerAddMenu = document.querySelector<HTMLDivElement>("#composer-add-menu")!;
+const composerContextUsageButton = document.querySelector<HTMLButtonElement>("#composer-context-usage")!;
+const composerContextUsageMenu = document.querySelector<HTMLDivElement>("#composer-context-usage-menu")!;
+const composerContextUsageValue = document.querySelector<HTMLDivElement>("#composer-context-usage-value")!;
+const composerCompactContext = document.querySelector<HTMLButtonElement>("#composer-compact-context")!;
 const composerModelButton = document.querySelector<HTMLButtonElement>("#composer-model")!;
 const composerModelMenu = document.querySelector<HTMLDivElement>("#composer-model-menu")!;
 const composerContext = document.querySelector<HTMLDivElement>("#composer-context")!;
@@ -586,6 +595,7 @@ function setMenuOpen(button: HTMLButtonElement, menu: HTMLElement, open: boolean
 
 function closeComposerMenus(): void {
 	setMenuOpen(composerAddButton, composerAddMenu, false);
+	setMenuOpen(composerContextUsageButton, composerContextUsageMenu, false);
 	setMenuOpen(composerModelButton, composerModelMenu, false);
 	closeSlashCommandMenu();
 }
@@ -923,6 +933,7 @@ function setBusy(isBusy: boolean): void {
 	runState.textContent = isBusy ? "Running" : "Idle";
 	runState.className = `run-state ${isBusy ? "running" : "idle"}`;
 	if (!isBusy) hideStreamingIndicator();
+	composerCompactContext.disabled = isBusy || (state?.messageCount ?? 0) < 2;
 	syncSendButtonState();
 }
 
@@ -1553,6 +1564,7 @@ function renderState(next: DesktopState): void {
 		<div><span>Model</span><strong>${requiresAuth ? "Login required" : model}</strong></div>
 	`;
 	setBusy(next.isStreaming);
+	renderContextUsage(next);
 	renderComposerContext();
 
 	const selectedValue = next.model ? `${next.model.provider}:${next.model.id}` : "";
@@ -1563,6 +1575,32 @@ function renderState(next: DesktopState): void {
 	if (!previous || previous.sessionId !== next.sessionId || previous.cwd !== next.cwd) {
 		renderSessionList();
 	}
+}
+
+function compactTokenCount(value: number | null): string {
+	if (!Number.isFinite(value)) return "unknown";
+	const numericValue = value as number;
+	if (numericValue >= 1_000_000) return `${(numericValue / 1_000_000).toFixed(numericValue >= 10_000_000 ? 0 : 1)}m`;
+	if (numericValue >= 1_000) return `${(numericValue / 1_000).toFixed(numericValue >= 100_000 ? 0 : 1)}k`;
+	return String(Math.round(numericValue));
+}
+
+function renderContextUsage(next = state): void {
+	const usage = next?.contextUsage;
+	composerContextUsageButton.hidden = !usage;
+	if (!usage) {
+		setMenuOpen(composerContextUsageButton, composerContextUsageMenu, false);
+		return;
+	}
+	const percent = Number.isFinite(usage.percent) ? Math.max(0, Math.min(100, usage.percent as number)) : 0;
+	const ring = composerContextUsageButton.querySelector<SVGCircleElement>(".context-usage-value");
+	if (ring) ring.style.strokeDashoffset = String(100 - percent);
+	const tokenSummary = `${compactTokenCount(usage.tokens)} / ${compactTokenCount(usage.contextWindow)} tokens`;
+	const percentSummary = usage.percent === null ? "Usage estimate unavailable" : `${Math.round(percent)}% used`;
+	composerContextUsageButton.title = `${percentSummary} · ${tokenSummary}`;
+	composerContextUsageButton.setAttribute("aria-label", `Context window: ${percentSummary}, ${tokenSummary}`);
+	composerContextUsageValue.textContent = `${tokenSummary} · ${percentSummary}`;
+	composerCompactContext.disabled = isComposerBusy || next.messageCount < 2;
 }
 
 function updateSessionTitle(): void {
@@ -3058,6 +3096,19 @@ composerAddButton.addEventListener("click", (event) => {
 	}
 });
 
+composerContextUsageButton.addEventListener("mousedown", (event) => {
+	event.preventDefault();
+	event.stopPropagation();
+	toggleComposerMenu(composerContextUsageButton, composerContextUsageMenu);
+});
+
+composerContextUsageButton.addEventListener("click", (event) => {
+	event.stopPropagation();
+	if (event.detail === 0) {
+		toggleComposerMenu(composerContextUsageButton, composerContextUsageMenu);
+	}
+});
+
 composerModelButton.addEventListener("mousedown", (event) => {
 	event.preventDefault();
 	event.stopPropagation();
@@ -3092,6 +3143,24 @@ composerAddMenu.addEventListener("click", async (event) => {
 
 composerModelMenu.addEventListener("click", (event) => {
 	event.stopPropagation();
+});
+
+composerContextUsageMenu.addEventListener("click", (event) => {
+	event.stopPropagation();
+});
+
+composerCompactContext.addEventListener("click", async () => {
+	if (composerCompactContext.disabled) return;
+	closeComposerMenus();
+	setBusy(true);
+	try {
+		renderState(await window.piDesktop.compact());
+		renderMessages(await window.piDesktop.getMessages());
+	} catch (error) {
+		showError(error);
+	} finally {
+		setBusy(Boolean(state?.isStreaming));
+	}
 });
 
 sessionMenuTrigger.addEventListener("click", (event) => {

@@ -293,6 +293,28 @@
 								</div>
 								<div class="composer-model-wrap">
 									<button
+										id="composer-context-usage"
+										class="composer-context-usage"
+										type="button"
+										aria-label="Context usage"
+										aria-expanded="false"
+										aria-controls="composer-context-usage-menu"
+										hidden
+									>
+										<svg viewBox="0 0 20 20" aria-hidden="true">
+											<circle class="context-usage-track" cx="10" cy="10" r="7" pathLength="100" />
+											<circle class="context-usage-value" cx="10" cy="10" r="7" pathLength="100" />
+										</svg>
+									</button>
+									<div id="composer-context-usage-menu" class="composer-menu context-usage-menu" hidden>
+										<div class="context-usage-heading">Context window</div>
+										<div id="composer-context-usage-value" class="context-usage-copy">Usage unavailable</div>
+										<button id="composer-compact-context" type="button" class="context-usage-compact">
+											<span>Compact context</span>
+											<small>Summarize older messages to make room</small>
+										</button>
+									</div>
+									<button
 										id="composer-model"
 										class="composer-menu-trigger composer-model"
 										type="button"

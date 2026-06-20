@@ -69,6 +69,11 @@ type DesktopState = {
 	sessionFile?: string;
 	sessionName?: string;
 	model?: { provider: string; id: string };
+	contextUsage?: {
+		tokens: number | null;
+		contextWindow: number;
+		percent: number | null;
+	};
 	thinkingLevel?: string;
 	availableThinkingLevels?: string[];
 	authRequired: boolean;
@@ -450,6 +455,7 @@ function serializeState(): DesktopState {
 		sessionFile: session.sessionFile,
 		sessionName: session.sessionManager.getSessionName(),
 		model: hasRealModel && model ? { provider: model.provider, id: model.id } : undefined,
+		contextUsage: session.getContextUsage(),
 		thinkingLevel: session.thinkingLevel,
 		availableThinkingLevels: session.getAvailableThinkingLevels(),
 		authRequired: availableModelCount === 0,
