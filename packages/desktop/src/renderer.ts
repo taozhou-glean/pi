@@ -78,6 +78,12 @@ type DesktopMessage = {
 	errorMessage?: string;
 };
 
+type OptimisticDesktopMessage = DesktopMessage & {
+	baseBackendCount: number;
+	optimistic: true;
+	optimisticId: string;
+};
+
 type DesktopContent =
 	| { type: "text"; text: string }
 	| { type: "thinking"; text: string }
@@ -477,7 +483,9 @@ document.body.append(imagePreviewOverlay);
 let state: DesktopState | undefined;
 let models: DesktopModel[] = [];
 let sessions: DesktopSessionInfo[] = [];
+let backendMessages: DesktopMessage[] = [];
 let currentMessages: DesktopMessage[] = [];
+let optimisticUserMessages: OptimisticDesktopMessage[] = [];
 let composerImages: ComposerImageAttachment[] = [];
 let composerFiles: ComposerFileAttachment[] = [];
 let switchingSessionPath: string | undefined;
@@ -1506,6 +1514,66 @@ function renderContent(message: DesktopMessage, options: { includeImages?: boole
 	return body;
 }
 
+function imageBlocksForMessage(message: DesktopMessage): Array<Extract<DesktopContent, { type: "image" }>> {
+	return (message.content ?? []).filter(
+		(block): block is Extract<DesktopContent, { type: "image" }> => block.type === "image",
+	);
+}
+
+function optimisticMessageMatches(
+	candidate: DesktopMessage,
+	candidateIndex: number,
+	optimistic: OptimisticDesktopMessage,
+): boolean {
+	if (candidateIndex < optimistic.baseBackendCount || candidate.role !== "user") return false;
+	if (contentText(candidate) !== contentText(optimistic)) return false;
+	const candidateImages = imageBlocksForMessage(candidate);
+	const optimisticImages = imageBlocksForMessage(optimistic);
+	if (candidateImages.length !== optimisticImages.length) return false;
+	return optimisticImages.every((image, index) => {
+		const candidateImage = candidateImages[index];
+		return candidateImage?.mimeType === image.mimeType && candidateImage?.data === image.data;
+	});
+}
+
+function messagesWithOptimisticUserMessages(messages: DesktopMessage[]): DesktopMessage[] {
+	if (optimisticUserMessages.length === 0) return messages;
+	const pending = optimisticUserMessages.filter(
+		(optimistic) => !messages.some((message, index) => optimisticMessageMatches(message, index, optimistic)),
+	);
+	if (pending.length !== optimisticUserMessages.length) optimisticUserMessages = pending;
+	return pending.length === 0 ? messages : [...messages, ...pending];
+}
+
+function removeOptimisticUserMessage(id: string): void {
+	const previousLength = optimisticUserMessages.length;
+	optimisticUserMessages = optimisticUserMessages.filter((message) => message.optimisticId !== id);
+	if (optimisticUserMessages.length !== previousLength) renderMessages(backendMessages);
+}
+
+function appendOptimisticUserMessage(
+	text: string,
+	images: Array<{ type: "image"; data: string; mimeType: string }>,
+): string {
+	const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	shouldFollowMessages = true;
+	optimisticUserMessages.push({
+		role: "user",
+		text,
+		content: [
+			...(text ? [{ type: "text" as const, text }] : []),
+			...images.map((image) => ({ type: "image" as const, data: image.data, mimeType: image.mimeType })),
+		],
+		timestamp: Date.now(),
+		optimistic: true,
+		optimisticId: id,
+		baseBackendCount: backendMessages.length,
+	});
+	renderMessages(backendMessages);
+	scrollMessagesToBottom();
+	return id;
+}
+
 function openImagePreviewSource(name: string, src: string): void {
 	openImagePreview({ id: src, data: "", mimeType: "image/png", name, objectUrl: src });
 }
@@ -1573,6 +1641,7 @@ function renderToolInput(input: unknown): string {
 function createMessage(message: DesktopMessage): HTMLElement {
 	const row = document.createElement("article");
 	row.className = `message ${message.role}`;
+	row.classList.toggle("optimistic", (message as Partial<OptimisticDesktopMessage>).optimistic === true);
 
 	if (message.role === "user") {
 		const userContent = splitVisibleTextAndContextPaths(contentText(message));
@@ -1873,9 +1942,12 @@ function renderLastTurnArtifact(): void {
 }
 
 function renderMessages(messages: DesktopMessage[]): void {
-	currentMessages = messages;
+	backendMessages = messages;
 	syncSessionMenu();
 	const sessionChanged = renderedSessionId !== state?.sessionId;
+	if (sessionChanged) optimisticUserMessages = [];
+	messages = messagesWithOptimisticUserMessages(messages);
+	currentMessages = messages;
 	const followAfterRender = sessionChanged || shouldFollowMessages || isMessagesScrolledToBottom();
 	const previousScrollTop = messagesEl.scrollTop;
 	messagesEl.innerHTML = "";
@@ -3988,6 +4060,7 @@ async function sendCurrentComposer(mode: "send" | "queue" | "steer" = "send"): P
 	clearComposerAttachments();
 	autosizePrompt();
 	setBusy(true);
+	const optimisticMessageId = mode === "send" ? appendOptimisticUserMessage(promptText, images) : undefined;
 	if (mode !== "queue") showStreamingIndicator();
 	try {
 		const payload = { text: promptText, images };
@@ -4001,6 +4074,7 @@ async function sendCurrentComposer(mode: "send" | "queue" | "steer" = "send"): P
 		if (hasDraftComments) markDraftCommentsSubmitted();
 		await refreshSessions();
 	} catch (error) {
+		if (optimisticMessageId) removeOptimisticUserMessage(optimisticMessageId);
 		showError(error);
 		setBusy(Boolean(state?.isStreaming));
 	}
