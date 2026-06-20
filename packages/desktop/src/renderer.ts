@@ -497,6 +497,7 @@ let activeCommentAnchor: ReviewCommentAnchor | undefined;
 let rangeSelectStart: { filePath: string; oldLine?: number; newLine?: number; side: "old" | "new" } | undefined;
 const clarificationDraftsById = new Map<string, string>();
 const completedToolExecutions = new Map<string, { isError: boolean }>();
+const toolStackOpenStateByKey = new Map<string, boolean>();
 const diffLineMetadata = new WeakMap<HTMLElement, { file: DiffFile; line: DiffLine }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
@@ -1638,6 +1639,34 @@ function renderToolInput(input: unknown): string {
 	}
 }
 
+function toolDescription(call: DesktopToolCall): string {
+	const input = call.input;
+	if (!input || typeof input !== "object" || Array.isArray(input)) return "";
+	const record = input as Record<string, unknown>;
+	const value =
+		record.path ??
+		record.file_path ??
+		record.command ??
+		record.pattern ??
+		record.query ??
+		record.description ??
+		record.prompt;
+	if (typeof value !== "string") return "";
+	const normalized = value.replace(/\s+/g, " ").trim();
+	return normalized.length > 92 ? `${normalized.slice(0, 89)}...` : normalized;
+}
+
+function renderToolOutput(result: DesktopMessage): HTMLElement | undefined {
+	const output = contentText(result);
+	if (!output) return undefined;
+	const pre = document.createElement("pre");
+	pre.className = "tool-result-body";
+	const code = document.createElement("code");
+	code.textContent = output;
+	pre.append(code);
+	return pre;
+}
+
 function createMessage(message: DesktopMessage): HTMLElement {
 	const row = document.createElement("article");
 	row.className = `message ${message.role}`;
@@ -1788,15 +1817,28 @@ function createToolGroup(
 	const details = document.createElement("details");
 	details.className = `tool-group ${result?.isError || execution?.isError ? "error" : ""}`;
 	details.open = !collapsed;
+	details.dataset.toolCallId = call.id;
 
 	const summary = document.createElement("summary");
+	const title = document.createElement("span");
+	title.className = "tool-title";
 	const name = document.createElement("span");
 	name.className = "tool-name";
 	name.textContent = formatToolLabel(call.name);
+	title.append(name);
+	const description = toolDescription(call);
+	if (description) {
+		const detail = document.createElement("span");
+		detail.className = "tool-description";
+		detail.textContent = description;
+		detail.title = description;
+		title.append(detail);
+	}
 	const stateLabel = document.createElement("span");
 	stateLabel.className = "tool-state";
 	stateLabel.textContent = toolStateLabel(result, execution);
-	summary.append(name, stateLabel);
+	details.dataset.toolState = stateLabel.textContent.toLowerCase();
+	summary.append(title, stateLabel);
 	details.append(summary);
 
 	const input = renderToolInput(call.input);
@@ -1809,11 +1851,144 @@ function createToolGroup(
 		details.append(pre);
 	}
 	if (result) {
-		const body = renderContent(result);
-		body.classList.add("tool-result-body");
-		details.append(body);
+		const output = renderToolOutput(result);
+		if (output) details.append(output);
 	}
+	details.dataset.toolSignature = JSON.stringify([
+		call.id,
+		call.name,
+		input,
+		details.dataset.toolState,
+		result?.isError,
+		result ? contentText(result) : undefined,
+		execution?.isError,
+	]);
 	return details;
+}
+
+function toolStackKey(groups: HTMLElement[]): string {
+	return (
+		groups[0]?.dataset.toolCallId ||
+		groups
+			.map((group) => group.dataset.toolCallId)
+			.filter(Boolean)
+			.join("|")
+	);
+}
+
+function createCollapsedToolStack(groups: HTMLElement[], hasError: boolean): HTMLElement {
+	const details = document.createElement("details");
+	details.className = `tool-stack-group ${hasError ? "error" : ""}`;
+	const key = toolStackKey(groups);
+	if (key) {
+		details.dataset.toolStackKey = key;
+		const rememberedOpen = toolStackOpenStateByKey.get(key);
+		if (typeof rememberedOpen === "boolean") details.open = rememberedOpen;
+	}
+	const summary = document.createElement("summary");
+	const name = document.createElement("span");
+	name.className = "tool-name";
+	name.textContent = `${groups.length} tool call${groups.length === 1 ? "" : "s"}`;
+	const failedCount = groups.filter((group) => group.dataset.toolState === "failed").length;
+	const completedCount = groups.filter((group) => group.dataset.toolState === "completed").length;
+	const runningCount = groups.filter((group) => group.dataset.toolState === "running").length;
+	const stateLabel = document.createElement("span");
+	stateLabel.className = "tool-state";
+	if (runningCount > 0) {
+		details.dataset.toolState = "running";
+		const running = document.createElement("span");
+		running.className = "tool-stat-running";
+		running.textContent = `${runningCount} running`;
+		const completed = document.createElement("span");
+		completed.className = "tool-stat-completed";
+		completed.textContent = `${completedCount} completed`;
+		stateLabel.append(running, document.createTextNode(" · "), completed);
+		if (failedCount > 0) {
+			const failed = document.createElement("span");
+			failed.className = "tool-stat-failed";
+			failed.textContent = `${failedCount} failed`;
+			stateLabel.append(document.createTextNode(" · "), failed);
+		}
+	} else if (failedCount > 0) {
+		details.dataset.toolState = "failed";
+		const completed = document.createElement("span");
+		completed.className = "tool-stat-completed";
+		completed.textContent = `${completedCount} completed`;
+		const failed = document.createElement("span");
+		failed.className = "tool-stat-failed";
+		failed.textContent = `${failedCount} failed`;
+		stateLabel.append(completed, document.createTextNode(" · "), failed);
+	} else {
+		details.dataset.toolState = "completed";
+		stateLabel.textContent = "Completed";
+	}
+	details.dataset.toolStackSignature = JSON.stringify(groups.map((group) => group.dataset.toolSignature ?? ""));
+	summary.append(name, stateLabel);
+	const body = document.createElement("div");
+	body.className = "tool-stack-group-body";
+	body.append(...groups);
+	details.append(summary, body);
+	details.addEventListener("toggle", () => {
+		if (key) toolStackOpenStateByKey.set(key, details.open);
+	});
+	return details;
+}
+
+function buildToolGroupsForMessage(
+	message: DesktopMessage,
+	index: number,
+	messages: DesktopMessage[],
+	compactCompleted = false,
+): { groups: HTMLElement[]; hasError: boolean; hasIncompleteTool: boolean } {
+	const groups: HTMLElement[] = [];
+	let hasIncompleteTool = false;
+	let hasError = false;
+	for (const call of message.toolCalls ?? []) {
+		const resultIndex = messages.findIndex((candidate, candidateIndex) => {
+			return candidateIndex > index && candidate.role === "toolResult" && candidate.toolCallId === call.id;
+		});
+		const result = resultIndex === -1 ? undefined : messages[resultIndex];
+		const hasNewerMessages = resultIndex !== -1 && resultIndex < messages.length - 1;
+		const execution = result ? undefined : completedToolExecutions.get(call.id);
+		hasIncompleteTool ||= !result && !execution;
+		hasError ||= result?.isError === true || execution?.isError === true;
+		groups.push(createToolGroup(call, result, execution, hasNewerMessages || Boolean(execution) || compactCompleted));
+	}
+	return { groups, hasError, hasIncompleteTool };
+}
+
+function renderToolStackForMessage(
+	message: DesktopMessage,
+	index: number,
+	messages: DesktopMessage[],
+	compactCompleted = false,
+): HTMLElement | undefined {
+	if (!message.toolCalls?.length) return undefined;
+	const tools = document.createElement("div");
+	tools.className = "tool-stack";
+	const { groups, hasError, hasIncompleteTool } = buildToolGroupsForMessage(
+		message,
+		index,
+		messages,
+		compactCompleted,
+	);
+	if (compactCompleted && groups.length > 1 && !hasIncompleteTool) {
+		tools.append(createCollapsedToolStack(groups, hasError));
+	} else {
+		tools.append(...groups);
+	}
+	return tools;
+}
+
+function lastUserMessageIndex(messages: DesktopMessage[]): number {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		if (messages[index]?.role === "user") return index;
+	}
+	return -1;
+}
+
+function shouldCompactToolMessage(index: number, isActivelyStreaming: boolean, messages: DesktopMessage[]): boolean {
+	return !isActivelyStreaming && (!isComposerBusy || index < lastUserMessageIndex(messages));
 }
 
 function normalizePlanItems(value: unknown): DesktopTodo[] {
@@ -1954,6 +2129,7 @@ function renderMessages(messages: DesktopMessage[]): void {
 	if (sessionChanged) {
 		renderedSessionId = state?.sessionId;
 		completedToolExecutions.clear();
+		toolStackOpenStateByKey.clear();
 		visibleMessageLimit = messagePageSize;
 		shouldFollowMessages = true;
 	}
@@ -1986,20 +2162,14 @@ function renderMessages(messages: DesktopMessage[]): void {
 		if (message.role === "toolResult") continue;
 		if (!hasVisibleContent(message)) continue;
 		const row = createMessage(message);
-		if (message.toolCalls?.length) {
-			const tools = document.createElement("div");
-			tools.className = "tool-stack";
-			for (const call of message.toolCalls) {
-				const resultIndex = messages.findIndex((candidate, candidateIndex) => {
-					return candidateIndex > index && candidate.role === "toolResult" && candidate.toolCallId === call.id;
-				});
-				const result = resultIndex === -1 ? undefined : messages[resultIndex];
-				const hasNewerMessages = resultIndex !== -1 && resultIndex < messages.length - 1;
-				const execution = result ? undefined : completedToolExecutions.get(call.id);
-				tools.append(createToolGroup(call, result, execution, hasNewerMessages || Boolean(execution)));
-			}
-			row.append(tools);
-		}
+		const isActivelyStreaming = isComposerBusy && index === messages.length - 1;
+		const tools = renderToolStackForMessage(
+			message,
+			index,
+			messages,
+			shouldCompactToolMessage(index, isActivelyStreaming, messages),
+		);
+		if (tools) row.append(tools);
 		messagesEl.append(row);
 	}
 	renderSessionPlan(messages);

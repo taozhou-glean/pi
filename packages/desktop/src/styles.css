@@ -3663,14 +3663,31 @@ body.resizing-panels {
 	margin-top: 10px;
 }
 
-.tool-group {
+.tool-group,
+.tool-stack-group {
 	overflow: hidden;
 	border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 	border-radius: 8px;
 	background: color-mix(in srgb, var(--panel) 56%, transparent);
 }
 
-.tool-group summary {
+.tool-group[open],
+.tool-stack-group[open] {
+	max-height: min(300px, 65vh);
+	overflow: auto;
+	overscroll-behavior: contain;
+}
+
+.tool-group[open] > summary,
+.tool-stack-group[open] > summary {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: color-mix(in srgb, var(--panel) 92%, var(--paper));
+}
+
+.tool-group summary,
+.tool-stack-group summary {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -3682,11 +3699,13 @@ body.resizing-panels {
 	list-style: none;
 }
 
-.tool-group summary::-webkit-details-marker {
+.tool-group summary::-webkit-details-marker,
+.tool-stack-group summary::-webkit-details-marker {
 	display: none;
 }
 
-.tool-group summary::before {
+.tool-group > summary::before,
+.tool-stack-group > summary::before {
 	color: var(--faint);
 	content: "›";
 	font-size: 18px;
@@ -3694,30 +3713,125 @@ body.resizing-panels {
 	transition: transform 120ms ease;
 }
 
-.tool-group[open] summary::before {
+.tool-group[open] > summary::before,
+.tool-stack-group[open] > summary::before {
 	transform: rotate(90deg);
 }
 
-.tool-name {
+.tool-stack-group-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 6px;
+	border-top: 1px solid var(--line);
+}
+
+.tool-title {
+	display: flex;
+	align-items: center;
+	gap: 7px;
 	flex: 1;
+	min-width: 0;
+}
+
+.tool-name {
+	flex: none;
 	font-size: 12px;
 	font-weight: 620;
 	color: var(--muted);
 }
 
+.tool-description {
+	overflow: hidden;
+	min-width: 0;
+	color: var(--faint);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 11px;
+	font-weight: 450;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .tool-state {
+	flex: none;
 	font-size: 11px;
 	font-weight: 560;
 	letter-spacing: 0;
 	color: var(--faint);
 }
 
-.tool-group.error .tool-state {
+.tool-stack-group > summary > .tool-name {
+	margin-right: auto;
+}
+
+.tool-group[data-tool-state="running"],
+.tool-stack-group[data-tool-state="running"] {
+	border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.tool-group[data-tool-state="running"] > summary,
+.tool-stack-group[data-tool-state="running"] > summary {
+	background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.tool-group[data-tool-state="running"] > summary > .tool-state,
+.tool-stack-group[data-tool-state="running"] > summary > .tool-state {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--accent);
+	font-weight: 720;
+}
+
+.tool-group[data-tool-state="running"] > summary > .tool-state::before,
+.tool-stack-group[data-tool-state="running"] > summary > .tool-state::before {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: currentColor;
+	content: "";
+	animation: tool-running-pulse 1s ease-in-out infinite;
+}
+
+@keyframes tool-running-pulse {
+	0%,
+	100% {
+		opacity: 0.35;
+		transform: scale(0.8);
+	}
+
+	50% {
+		opacity: 1;
+		transform: scale(1.15);
+	}
+}
+
+.tool-group.error > summary > .tool-state,
+.tool-stack-group.error > summary > .tool-state,
+.tool-stat-failed {
 	color: #c75f4a;
+}
+
+.tool-stack-group.error > summary > .tool-state:has(.tool-stat-completed) {
+	color: var(--faint);
+}
+
+.tool-stack-group[data-tool-state="running"] > summary > .tool-state {
+	color: var(--accent);
+}
+
+.tool-stat-running {
+	color: var(--accent);
+}
+
+.tool-stat-completed {
+	color: var(--faint);
 }
 
 .tool-input {
 	overflow: auto;
+	max-height: 220px;
 	max-width: 100%;
 	margin: 0;
 	padding: 10px 12px;
@@ -3729,11 +3843,24 @@ body.resizing-panels {
 	line-height: 1.5;
 }
 
+.tool-group[data-tool-state="running"] > .tool-input {
+	border-top: 0;
+}
+
 .tool-result-body {
+	overflow: auto;
+	max-height: 340px;
+	max-width: 100%;
+	margin: 0;
 	padding: 10px 12px 12px;
 	border-top: 1px solid var(--line);
+	background: color-mix(in srgb, var(--panel-soft) 72%, transparent);
 	color: var(--muted);
-	font-size: 13px;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 12px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	word-break: break-word;
 }
 
 .composer {
