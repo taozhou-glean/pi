@@ -47,14 +47,28 @@ const api = {
 	fixPrChecks: () => ipcRenderer.invoke("pi:fix-pr-checks"),
 	getDiff: (scope?: "working-tree" | "staged" | "last-turn", context?: number) =>
 		ipcRenderer.invoke("pi:get-diff", scope, context),
-	terminalCreate: () => ipcRenderer.invoke("pi:terminal-create"),
-	terminalWrite: (data: string) => ipcRenderer.send("pi:terminal-write", data),
-	terminalResize: (cols: number, rows: number) => ipcRenderer.send("pi:terminal-resize", cols, rows),
-	terminalDestroy: () => ipcRenderer.invoke("pi:terminal-destroy"),
-	onTerminalData: (handler: (data: string) => void) => {
-		const listener = (_event: Electron.IpcRendererEvent, data: string) => handler(data);
+	terminalCreate: (terminalId = "default") => ipcRenderer.invoke("pi:terminal-create", terminalId),
+	terminalWrite: (terminalId: string, data: string) => ipcRenderer.send("pi:terminal-write", terminalId, data),
+	terminalResize: (terminalId: string, cols: number, rows: number) =>
+		ipcRenderer.send("pi:terminal-resize", terminalId, cols, rows),
+	terminalDestroy: (terminalId?: string) => ipcRenderer.invoke("pi:terminal-destroy", terminalId),
+	terminalDestroyAll: () => ipcRenderer.send("pi:terminal-destroy-all"),
+	terminalFocus: (terminalId: string, focused: boolean) => ipcRenderer.send("pi:terminal-focus", terminalId, focused),
+	onTerminalData: (handler: (terminalId: string, data: string) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, payload: { data?: unknown; terminalId?: unknown }) => {
+			handler(typeof payload.terminalId === "string" ? payload.terminalId : "default", String(payload.data ?? ""));
+		};
 		ipcRenderer.on("pi:terminal-data", listener);
 		return () => ipcRenderer.off("pi:terminal-data", listener);
+	},
+	onTerminalZoom: (handler: (terminalId: string, delta: number) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, payload: { delta?: unknown; terminalId?: unknown }) => {
+			const terminalId = typeof payload.terminalId === "string" ? payload.terminalId : "default";
+			const delta = typeof payload.delta === "number" ? payload.delta : 0;
+			handler(terminalId, delta);
+		};
+		ipcRenderer.on("pi:terminal-zoom", listener);
+		return () => ipcRenderer.off("pi:terminal-zoom", listener);
 	},
 	onState: (handler: (state: unknown) => void) => {
 		const listener = (_event: Electron.IpcRendererEvent, state: unknown) => handler(state);

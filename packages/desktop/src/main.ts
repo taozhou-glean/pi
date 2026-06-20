@@ -246,6 +246,7 @@ const pendingPermissionsById = new Map<string, PendingDesktopPermission>();
 const permissionTimeoutMs = 5 * 60_000;
 let prMonitor: DesktopPrMonitor | undefined;
 const prMonitorIntervalMs = 60_000;
+let focusedTerminalId: string | undefined;
 let isQuitting = false;
 let pendingSessionSnapshot: NodeJS.Timeout | undefined;
 
@@ -1588,6 +1589,20 @@ async function createWindow(): Promise<void> {
 			event.preventDefault();
 		}
 	});
+	mainWindow.webContents.on("before-input-event", (event, input) => {
+		if (!focusedTerminalId || input.type !== "keyDown" || input.alt) return;
+		const isCommand = process.platform === "darwin" ? input.meta && !input.control : input.control && !input.meta;
+		if (!isCommand) return;
+		let delta = 0;
+		if (input.key === "+" || input.key === "=" || input.code === "Equal" || input.code === "NumpadAdd") {
+			delta = 1;
+		} else if (input.key === "-" || input.key === "_" || input.code === "Minus" || input.code === "NumpadSubtract") {
+			delta = -1;
+		}
+		if (delta === 0) return;
+		event.preventDefault();
+		send("pi:terminal-zoom", { delta, terminalId: focusedTerminalId });
+	});
 
 	if (process.env.PI_DESKTOP_SMOKE === "1") {
 		await mainWindow.webContents.session.clearStorageData({ storages: ["localstorage"] });
@@ -1595,6 +1610,9 @@ async function createWindow(): Promise<void> {
 	await mainWindow.loadFile(resolve(__dirname, "index.html"));
 	mainWindow.show();
 	mainWindow.focus();
+	mainWindow.on("closed", () => {
+		focusedTerminalId = undefined;
+	});
 	if (process.env.PI_DESKTOP_SMOKE === "1") {
 		const result = await mainWindow.webContents.executeJavaScript(`
 				(async () => {
@@ -2708,37 +2726,68 @@ ipcMain.handle("pi:get-diff", async (_event, scope?: DesktopDiffScope, context?:
 );
 
 // Terminal (PTY) management
-let ptyProcess: pty.IPty | undefined;
+const terminalProcesses = new Map<string, pty.IPty>();
 
-ipcMain.handle("pi:terminal-create", () => {
-	if (ptyProcess) return;
+ipcMain.handle("pi:terminal-create", (_event, terminalId = "default") => {
+	if (terminalProcesses.has(terminalId)) return;
 	const userShell = process.env.SHELL || "/bin/zsh";
-	ptyProcess = pty.spawn(userShell, [], {
+	const shellName = basename(userShell);
+	const shellArgs = shellName === "zsh" || shellName === "bash" ? ["-i"] : [];
+	const ptyProcess = pty.spawn(userShell, shellArgs, {
 		name: "xterm-256color",
 		cols: 80,
 		rows: 24,
 		cwd: currentCwd,
 		env: process.env as Record<string, string>,
 	});
+	terminalProcesses.set(terminalId, ptyProcess);
 	ptyProcess.onData((data) => {
-		send("pi:terminal-data", data);
+		send("pi:terminal-data", { data, terminalId });
 	});
-	ptyProcess.onExit(() => {
-		ptyProcess = undefined;
+	ptyProcess.onExit(({ exitCode, signal }) => {
+		if (terminalProcesses.get(terminalId) !== ptyProcess) return;
+		send("pi:terminal-data", {
+			data: `\r\n[terminal exited: code ${exitCode}${signal ? `, signal ${signal}` : ""}]\r\n`,
+			terminalId,
+		});
+		terminalProcesses.delete(terminalId);
+		if (focusedTerminalId === terminalId) focusedTerminalId = undefined;
 	});
 });
 
-ipcMain.on("pi:terminal-write", (_event, data: string) => {
-	ptyProcess?.write(data);
+ipcMain.on("pi:terminal-write", (_event, terminalId: string, data: string) => {
+	terminalProcesses.get(terminalId)?.write(data);
 });
 
-ipcMain.on("pi:terminal-resize", (_event, cols: number, rows: number) => {
-	ptyProcess?.resize(cols, rows);
+ipcMain.on("pi:terminal-resize", (_event, terminalId: string, cols: number, rows: number) => {
+	if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return;
+	terminalProcesses.get(terminalId)?.resize(cols, rows);
 });
 
-ipcMain.handle("pi:terminal-destroy", () => {
-	ptyProcess?.kill();
-	ptyProcess = undefined;
+ipcMain.on("pi:terminal-focus", (_event, terminalId: string, focused: boolean) => {
+	focusedTerminalId = focused ? terminalId : focusedTerminalId === terminalId ? undefined : focusedTerminalId;
+});
+
+function destroyTerminals(terminalId?: string): void {
+	if (terminalId) {
+		terminalProcesses.get(terminalId)?.kill();
+		terminalProcesses.delete(terminalId);
+		if (focusedTerminalId === terminalId) focusedTerminalId = undefined;
+		return;
+	}
+	for (const terminalProcess of terminalProcesses.values()) {
+		terminalProcess.kill();
+	}
+	terminalProcesses.clear();
+	focusedTerminalId = undefined;
+}
+
+ipcMain.handle("pi:terminal-destroy", (_event, terminalId?: string) => {
+	destroyTerminals(terminalId);
+});
+
+ipcMain.on("pi:terminal-destroy-all", () => {
+	destroyTerminals();
 });
 
 app.whenReady().then(async () => {
@@ -2770,6 +2819,7 @@ app.on("before-quit", () => {
 		clearTimeout(pendingSessionSnapshot);
 		pendingSessionSnapshot = undefined;
 	}
+	destroyTerminals();
 	unsubscribeSession?.();
 	current?.session.dispose();
 	for (const services of servicesByCwd.values()) {

@@ -291,11 +291,14 @@ type PiDesktopApi = {
 	setPrMonitor(enabled: boolean): Promise<DesktopEnvironmentStatus>;
 	fixPrChecks(): Promise<DesktopEnvironmentStatus>;
 	getDiff(scope?: "working-tree" | "staged" | "last-turn", context?: number): Promise<ParsedDiff>;
-	terminalCreate(): Promise<void>;
-	terminalWrite(data: string): void;
-	terminalResize(cols: number, rows: number): void;
-	terminalDestroy(): Promise<void>;
-	onTerminalData(handler: (data: string) => void): () => void;
+	terminalCreate(terminalId?: string): Promise<void>;
+	terminalWrite(terminalId: string, data: string): void;
+	terminalResize(terminalId: string, cols: number, rows: number): void;
+	terminalDestroy(terminalId?: string): Promise<void>;
+	terminalDestroyAll(): void;
+	terminalFocus(terminalId: string, focused: boolean): void;
+	onTerminalData(handler: (terminalId: string, data: string) => void): () => void;
+	onTerminalZoom(handler: (terminalId: string, delta: number) => void): () => void;
 	onState(handler: (state: DesktopState) => void): () => void;
 	onMessages(handler: (messages: DesktopMessage[]) => void): () => void;
 	onEvent(handler: (event: unknown) => void): () => void;
@@ -4043,10 +4046,32 @@ toggleRightPanelButton.addEventListener("click", () => {
 });
 
 // Right panel tabs and terminal/browser panes
-let term: Terminal | undefined;
-let fitAddon: FitAddon | undefined;
-let terminalResizeObserver: ResizeObserver | undefined;
-let terminalCreated = false;
+const terminalDefaultFontSize = 13;
+const terminalMinFontSize = 10;
+const terminalMaxFontSize = 24;
+const terminalFontSizeStorageKey = "pi.desktop.terminalFontSize";
+
+type TerminalContext = {
+	created: boolean;
+	fitAddon: FitAddon;
+	focusListenersAttached: boolean;
+	fontSize: number;
+	id: string;
+	resizeObserver?: ResizeObserver;
+	term: Terminal;
+};
+
+const terminalContexts = new Map<string, TerminalContext>();
+let didSubscribeTerminalIpc = false;
+
+function terminalFontSizeKey(terminalId: string): string {
+	return `${terminalFontSizeStorageKey}.${terminalId}`;
+}
+
+function loadTerminalFontSize(terminalId: string): number {
+	const saved = Number(localStorage.getItem(terminalFontSizeKey(terminalId)));
+	return Number.isFinite(saved) ? clamp(saved, terminalMinFontSize, terminalMaxFontSize) : terminalDefaultFontSize;
+}
 
 function rightPanelTabFromDataset(button: HTMLButtonElement): RightPanelTab | undefined {
 	const tab = button.dataset.rightPanelTab;
@@ -4058,17 +4083,62 @@ function bottomPanelTabFromDataset(button: HTMLButtonElement): WindowPanelTab | 
 	return isWindowPanelTab(tab) ? tab : undefined;
 }
 
-function resizeTerminal(): void {
-	if (!term || !fitAddon || term.element?.offsetParent === null) return;
-	fitAddon.fit();
-	window.piDesktop.terminalResize(term.cols, term.rows);
+function resizeTerminal(terminalId?: string): void {
+	const contexts = terminalId
+		? [terminalContexts.get(terminalId)].filter((context): context is TerminalContext => Boolean(context))
+		: [...terminalContexts.values()];
+	for (const context of contexts) {
+		if (!context.term || !context.fitAddon || context.term.element?.offsetParent === null) continue;
+		context.fitAddon.fit();
+		if (context.term.cols > 0 && context.term.rows > 0) {
+			window.piDesktop.terminalResize(context.id, context.term.cols, context.term.rows);
+		}
+	}
 }
 
-function createTerminal(): void {
-	if (term) return;
-	term = new Terminal({
+function terminalZoomDelta(event: KeyboardEvent): number {
+	if (!event.metaKey || event.ctrlKey || event.altKey) return 0;
+	if (event.key === "+" || event.key === "=" || event.code === "NumpadAdd") return 1;
+	if (event.key === "-" || event.key === "_" || event.code === "NumpadSubtract") return -1;
+	return 0;
+}
+
+function setTerminalFontSize(context: TerminalContext, fontSize: number): void {
+	const nextFontSize = clamp(fontSize, terminalMinFontSize, terminalMaxFontSize);
+	if (nextFontSize === context.fontSize) return;
+	context.fontSize = nextFontSize;
+	localStorage.setItem(terminalFontSizeKey(context.id), String(nextFontSize));
+	context.term.options.fontSize = nextFontSize;
+	requestAnimationFrame(() => {
+		resizeTerminal(context.id);
+		context.term.refresh(0, context.term.rows - 1);
+	});
+}
+
+function subscribeTerminalIpc(): void {
+	if (didSubscribeTerminalIpc) return;
+	didSubscribeTerminalIpc = true;
+	window.piDesktop.onTerminalZoom((terminalId, delta) => {
+		const context = terminalContexts.get(terminalId);
+		if (context) setTerminalFontSize(context, context.fontSize + delta);
+	});
+	window.piDesktop.onTerminalData((terminalId, data) => {
+		const context = terminalContexts.get(terminalId);
+		if (data.includes("[terminal exited:") && context) {
+			context.created = false;
+		}
+		context?.term.write(data);
+	});
+}
+
+function createTerminalContext(id: string): TerminalContext {
+	const existingContext = terminalContexts.get(id);
+	if (existingContext) return existingContext;
+	subscribeTerminalIpc();
+	const fontSize = loadTerminalFontSize(id);
+	const term = new Terminal({
 		fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
-		fontSize: 13,
+		fontSize,
 		lineHeight: 1.35,
 		cursorBlink: true,
 		theme: {
@@ -4078,35 +4148,84 @@ function createTerminal(): void {
 			selectionBackground: "#264f78",
 		},
 	});
-	fitAddon = new FitAddon();
+	const fitAddon = new FitAddon();
+	const context: TerminalContext = {
+		created: false,
+		fitAddon,
+		focusListenersAttached: false,
+		fontSize,
+		id,
+		term,
+	};
+	terminalContexts.set(id, context);
 	term.loadAddon(fitAddon);
-	term.onData((data) => {
-		window.piDesktop.terminalWrite(data);
+	term.attachCustomKeyEventHandler((event) => {
+		if (event.type !== "keydown") return true;
+		const delta = terminalZoomDelta(event);
+		if (delta === 0) return true;
+		event.preventDefault();
+		event.stopPropagation();
+		setTerminalFontSize(context, context.fontSize + delta);
+		return false;
 	});
-	window.piDesktop.onTerminalData((data) => {
-		term?.write(data);
+	term.onData(async (data) => {
+		if (!context.created) {
+			if (data !== "\r" && data !== "\n") return;
+			context.created = true;
+			try {
+				await window.piDesktop.terminalCreate(context.id);
+			} catch (error) {
+				context.created = false;
+				showError(error);
+			}
+			return;
+		}
+		window.piDesktop.terminalWrite(context.id, data);
 	});
-	terminalResizeObserver = new ResizeObserver(resizeTerminal);
-	terminalResizeObserver.observe(terminalContainer);
-	terminalResizeObserver.observe(rightTerminalContainer);
+	return context;
 }
 
-function mountTerminal(host: HTMLElement): void {
-	createTerminal();
-	if (!term) return;
-	if (term.element) {
-		host.append(term.element);
+function attachTerminalFocusListeners(context: TerminalContext): void {
+	if (!context.term.element || context.focusListenersAttached) return;
+	context.focusListenersAttached = true;
+	context.term.element.addEventListener("focusin", () => {
+		window.piDesktop.terminalFocus(context.id, true);
+	});
+	context.term.element.addEventListener("focusout", (event) => {
+		if (event.relatedTarget instanceof Node && context.term.element?.contains(event.relatedTarget)) return;
+		window.piDesktop.terminalFocus(context.id, false);
+	});
+}
+
+window.addEventListener("beforeunload", () => {
+	window.piDesktop.terminalDestroyAll();
+});
+
+function mountTerminal(terminalId: string, host: HTMLElement): void {
+	const context = createTerminalContext(terminalId);
+	if (context.term.element) {
+		host.append(context.term.element);
 	} else {
-		term.open(host);
+		context.term.open(host);
 	}
-	if (!terminalCreated) {
-		terminalCreated = true;
-		window.piDesktop.terminalCreate().catch(showError);
+	attachTerminalFocusListeners(context);
+	if (!context.resizeObserver) {
+		context.resizeObserver = new ResizeObserver(() => resizeTerminal(context.id));
+		context.resizeObserver.observe(host);
+	}
+	if (!context.created) {
+		context.created = true;
+		window.piDesktop.terminalCreate(context.id).catch((error) => {
+			context.created = false;
+			showError(error);
+		});
 	}
 	setTimeout(() => {
-		resizeTerminal();
-		term?.focus();
+		resizeTerminal(context.id);
+		context.term.refresh(0, context.term.rows - 1);
+		context.term.focus();
 	}, 0);
+	setTimeout(() => resizeTerminal(context.id), 100);
 }
 
 function isBlankBrowserUrl(value: unknown): boolean {
@@ -4186,7 +4305,7 @@ function openUrlInRightBrowser(url: string): void {
 function syncRightPanelContent(): void {
 	if (layoutState.rightCollapsed) return;
 	if (layoutState.rightTab === "terminal") {
-		mountTerminal(rightTerminalContainer);
+		mountTerminal("right", rightTerminalContainer);
 	} else if (layoutState.rightTab === "browser") {
 		ensureBrowserLoaded(browserUrlInput, browserFrame);
 	} else if (layoutState.rightTab === "review") {
@@ -4197,7 +4316,7 @@ function syncRightPanelContent(): void {
 function syncBottomPanelContent(): void {
 	if (layoutState.bottomCollapsed) return;
 	if (layoutState.bottomTab === "terminal") {
-		mountTerminal(terminalContainer);
+		mountTerminal("bottom", terminalContainer);
 	} else {
 		ensureBrowserLoaded(bottomBrowserUrlInput, bottomBrowserFrame);
 	}
