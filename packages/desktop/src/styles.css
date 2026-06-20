@@ -46,7 +46,7 @@
 	--left-track: var(--left-panel-width);
 	--right-track: var(--right-panel-width);
 	--topbar-left-controls-width: 86px;
-	--topbar-right-controls-width: 76px;
+	--topbar-right-controls-width: 114px;
 	--chat-inset: clamp(24px, 5vw, 72px);
 	--chat-width: 820px;
 	background: var(--paper);
@@ -411,6 +411,64 @@ button:disabled {
 	padding: 0 8px 0 10px;
 	border-bottom: 1px solid var(--line);
 	background: var(--inspector);
+}
+
+.environment-popover {
+	position: absolute;
+	z-index: 80;
+	top: 54px;
+	right: 10px;
+	width: min(300px, calc(100vw - 28px));
+	max-height: calc(100vh - 66px);
+	overflow: hidden;
+	border: 1px solid var(--line-strong);
+	border-radius: 20px;
+	background: color-mix(in srgb, var(--panel-soft) 84%, var(--panel));
+	box-shadow: 0 16px 48px color-mix(in srgb, #000 34%, transparent);
+	-webkit-app-region: no-drag;
+}
+
+.environment-popover[hidden] {
+	display: none;
+}
+
+body[data-theme="dark"] .environment-popover {
+	border-color: #454543;
+	background: #2b2b2a;
+}
+
+.environment-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 52px;
+	min-height: 52px;
+	padding: 8px 16px 0 18px;
+}
+
+.environment-header > span {
+	flex: 1;
+	min-width: 0;
+	color: var(--muted);
+	font-size: 14px;
+	font-weight: 450;
+}
+
+.environment-header .chrome-button {
+	width: 30px;
+	height: 30px;
+	min-height: 30px;
+	padding: 6px;
+}
+
+.environment-header svg {
+	width: 18px;
+	height: 18px;
+	fill: none;
+	stroke: currentColor;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 1.75;
 }
 
 .right-pane-header span {
@@ -1765,6 +1823,16 @@ body[data-platform="mac"] .topbar-left-controls {
 	color: var(--ink);
 }
 
+#toggle-environment-card[aria-expanded="true"] {
+	background: var(--secondary-bg);
+	color: var(--ink);
+}
+
+#toggle-environment-card svg {
+	width: 15px;
+	height: 15px;
+}
+
 .left-panel-closed-icon {
 	display: none;
 }
@@ -2016,6 +2084,22 @@ body[data-platform="mac"] .topbar-left-controls {
 	height: 48px;
 	padding: 0 4px;
 	-webkit-app-region: no-drag;
+}
+
+#toggle-environment-card.has-pr-failures {
+	position: relative;
+}
+
+#toggle-environment-card.has-pr-failures::after {
+	position: absolute;
+	top: 4px;
+	right: 4px;
+	width: 6px;
+	height: 6px;
+	border: 1px solid var(--topbar);
+	border-radius: 50%;
+	background: #d95656;
+	content: "";
 }
 
 .resizer {
@@ -4350,7 +4434,11 @@ body[data-theme="dark"] #send {
 }
 
 .environment-content {
+	min-height: 0;
 	min-width: 0;
+	max-height: calc(100vh - 106px);
+	overflow: auto;
+	padding: 4px 16px 16px;
 }
 
 .environment-card {

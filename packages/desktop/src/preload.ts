@@ -73,6 +73,11 @@ const api = {
 		ipcRenderer.on("pi:terminal-zoom", listener);
 		return () => ipcRenderer.off("pi:terminal-zoom", listener);
 	},
+	onEnvironmentStatus: (handler: (status: unknown) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, status: unknown) => handler(status);
+		ipcRenderer.on("pi:environment-status", listener);
+		return () => ipcRenderer.off("pi:environment-status", listener);
+	},
 	onState: (handler: (state: unknown) => void) => {
 		const listener = (_event: Electron.IpcRendererEvent, state: unknown) => handler(state);
 		ipcRenderer.on("pi:state", listener);

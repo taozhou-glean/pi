@@ -304,6 +304,7 @@ type PiDesktopApi = {
 	terminalFocus(terminalId: string, focused: boolean): void;
 	onTerminalData(handler: (terminalId: string, data: string) => void): () => void;
 	onTerminalZoom(handler: (terminalId: string, delta: number) => void): () => void;
+	onEnvironmentStatus(handler: (status: DesktopEnvironmentStatus) => void): () => void;
 	onState(handler: (state: DesktopState) => void): () => void;
 	onMessages(handler: (messages: DesktopMessage[]) => void): () => void;
 	onEvent(handler: (event: unknown) => void): () => void;
@@ -368,8 +369,11 @@ const themeSelect = document.querySelector<HTMLSelectElement>("#theme-select")!;
 const gitBranch = document.querySelector<HTMLDivElement>("#git-branch")!;
 const gitStatus = document.querySelector<HTMLDivElement>("#git-status")!;
 const refreshGitButton = document.querySelector<HTMLButtonElement>("#refresh-git")!;
+const toggleEnvironmentCardButton = document.querySelector<HTMLButtonElement>("#toggle-environment-card")!;
 const refreshEnvironmentButton = document.querySelector<HTMLButtonElement>("#refresh-environment")!;
+const environmentPopover = document.querySelector<HTMLElement>("#environment-popover")!;
 const environmentContent = document.querySelector<HTMLDivElement>("#environment-content")!;
+const environmentTabIndicator = document.querySelector<HTMLSpanElement>("#environment-tab-indicator")!;
 const refreshReviewButton = document.querySelector<HTMLButtonElement>("#refresh-review")!;
 const reviewContent = document.querySelector<HTMLDivElement>("#review-content")!;
 const reviewStats = document.querySelector<HTMLSpanElement>("#review-stats")!;
@@ -652,6 +656,12 @@ function togglePanel(side: "left" | "right"): void {
 	}
 	applyLayoutState();
 	saveLayoutState();
+}
+
+function setEnvironmentPopoverOpen(open: boolean): void {
+	environmentPopover.hidden = !open;
+	toggleEnvironmentCardButton.setAttribute("aria-expanded", String(open));
+	if (open) refreshEnvironment().catch(showError);
 }
 
 function beginResize(side: "left" | "right", startX: number, handle: HTMLElement, pointerId: number): void {
@@ -2501,6 +2511,7 @@ function draftEnvironmentAction(text: string): void {
 	promptInput.value = text;
 	autosizePrompt();
 	syncSendButtonState();
+	setEnvironmentPopoverOpen(false);
 	promptInput.focus();
 	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
 }
@@ -2510,6 +2521,8 @@ function renderEnvironment(status: DesktopEnvironmentStatus): void {
 	const pullRequest = status.pullRequest;
 	const git = status.git;
 	const hasFailures = isOpenPullRequest(pullRequest) && pullRequest.kind === "ready" && pullRequest.failedCount > 0;
+	environmentTabIndicator.hidden = !hasFailures;
+	toggleEnvironmentCardButton.classList.toggle("has-pr-failures", hasFailures);
 	const changes = git.isRepo
 		? `<button id="environment-review-changes" class="environment-row environment-command-row" type="button">
 				<span class="environment-row-icon">${environmentIcon("changes")}</span>
@@ -4067,6 +4080,17 @@ toggleRightPanelButton.addEventListener("click", () => {
 	syncRightPanelContent();
 });
 
+toggleEnvironmentCardButton.addEventListener("click", (event) => {
+	event.stopPropagation();
+	setEnvironmentPopoverOpen(environmentPopover.hidden);
+});
+
+environmentPopover.addEventListener("click", (event) => {
+	event.stopPropagation();
+});
+
+document.addEventListener("click", () => setEnvironmentPopoverOpen(false));
+
 // Right panel tabs and terminal/browser panes
 const terminalDefaultFontSize = 13;
 const terminalMinFontSize = 10;
@@ -4841,6 +4865,7 @@ loginButton.addEventListener("click", async () => {
 
 window.piDesktop.onState(renderState);
 window.piDesktop.onMessages(renderMessages);
+window.piDesktop.onEnvironmentStatus(renderEnvironment);
 window.piDesktop.onEvent((event) => {
 	const typed = event as { type?: string } & DesktopToolExecutionEndEvent;
 	if (typed.type === "desktop_environment_status") {
@@ -4852,7 +4877,11 @@ window.piDesktop.onEvent((event) => {
 		window.piDesktop.getMessages().then(renderMessages).catch(showError);
 	}
 	if (typed.type === "agent_end") {
-		Promise.all([refreshGit(), refreshEnvironment(), refreshSessions()]).catch(showError);
+		Promise.all([
+			refreshGit(),
+			refreshSessions(),
+			!environmentPopover.hidden ? refreshEnvironment() : Promise.resolve(),
+		]).catch(showError);
 	}
 });
 
@@ -4872,3 +4901,9 @@ async function boot(): Promise<void> {
 }
 
 boot().catch(showError);
+
+setInterval(() => {
+	if (!environmentPopover.hidden) {
+		refreshEnvironment().catch(showError);
+	}
+}, 30_000);

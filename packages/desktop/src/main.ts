@@ -1365,6 +1365,7 @@ async function getEnvironmentStatus(pullRequest?: GithubPullRequestStatus): Prom
 }
 
 function publishEnvironmentStatus(status: DesktopEnvironmentStatus): void {
+	send("pi:environment-status", status);
 	send("pi:event", { type: "desktop_environment_status", status });
 }
 
