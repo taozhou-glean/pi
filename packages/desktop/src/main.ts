@@ -1777,6 +1777,32 @@ ipcMain.handle("pi:prompt", async (_event, payload: unknown) => {
 	send("pi:state", next);
 	return next;
 });
+ipcMain.handle("pi:queue-prompt", async (_event, payload: unknown) => {
+	await ensureDesktopSession();
+	const prompt = normalizePromptPayload(payload);
+	if (getSession().isStreaming || getSession().pendingMessageCount > 0) {
+		await getSession().followUp(prompt.text, prompt.images);
+	} else {
+		await captureLastTurnBase();
+		await getSession().prompt(prompt.text, { images: prompt.images });
+	}
+	const next = serializeState();
+	send("pi:state", next);
+	return next;
+});
+ipcMain.handle("pi:steer-prompt", async (_event, payload: unknown) => {
+	await ensureDesktopSession();
+	const prompt = normalizePromptPayload(payload);
+	if (getSession().isStreaming || getSession().pendingMessageCount > 0) {
+		await getSession().steer(prompt.text, prompt.images);
+	} else {
+		await captureLastTurnBase();
+		await getSession().prompt(prompt.text, { images: prompt.images });
+	}
+	const next = serializeState();
+	send("pi:state", next);
+	return next;
+});
 ipcMain.handle("pi:abort", async () => {
 	await ensureDesktopSession();
 	await getSession().abort();

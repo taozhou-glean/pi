@@ -161,6 +161,12 @@ type PiDesktopApi = {
 	prompt(
 		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
 	): Promise<DesktopState>;
+	queuePrompt(
+		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
+	): Promise<DesktopState>;
+	steerPrompt(
+		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
+	): Promise<DesktopState>;
 	abort(): Promise<DesktopState>;
 	chooseContext(kind: "files" | "folder" | "workspace"): Promise<DesktopContextSelection[]>;
 	setCwd(cwd: string): Promise<DesktopState>;
@@ -270,6 +276,7 @@ const sessionRenameInput = document.querySelector<HTMLInputElement>("#session-re
 const sessionRenameCancel = document.querySelector<HTMLButtonElement>("#session-rename-cancel")!;
 const composerAddButton = document.querySelector<HTMLButtonElement>("#composer-add")!;
 const composerAddMenu = document.querySelector<HTMLDivElement>("#composer-add-menu")!;
+const composerHint = document.querySelector<HTMLSpanElement>("#composer-hint")!;
 const composerContextUsageButton = document.querySelector<HTMLButtonElement>("#composer-context-usage")!;
 const composerContextUsageMenu = document.querySelector<HTMLDivElement>("#composer-context-usage-menu")!;
 const composerContextUsageValue = document.querySelector<HTMLDivElement>("#composer-context-usage-value")!;
@@ -971,6 +978,9 @@ function setBusy(isBusy: boolean): void {
 	sendButton.innerHTML = isBusy ? sendButtonStopIcon : sendButtonSendIcon;
 	runState.textContent = isBusy ? "Running" : "Idle";
 	runState.className = `run-state ${isBusy ? "running" : "idle"}`;
+	composerHint.textContent = isBusy
+		? "Enter queues next · ⌘ Enter steers current run"
+		: "Enter to send · Shift Enter newline";
 	if (!isBusy) hideStreamingIndicator();
 	composerCompactContext.disabled = isBusy || (state?.messageCount ?? 0) < 2;
 	syncSendButtonState();
@@ -2742,12 +2752,12 @@ async function abortCurrentRun(): Promise<void> {
 	}
 }
 
-async function sendCurrentComposer(): Promise<void> {
+async function sendCurrentComposer(mode: "send" | "queue" | "steer" = "send"): Promise<void> {
 	const message = promptInput.value.trim();
 	if (!message && composerImages.length === 0 && composerFiles.length === 0) return;
 	if (message.startsWith("/")) {
-		if (isComposerBusy) {
-			showError("Slash commands cannot be queued.");
+		if (mode !== "send" || isComposerBusy) {
+			showError("Slash commands cannot be queued or steered.");
 			return;
 		}
 		if (composerImages.length > 0 || composerFiles.length > 0) {
@@ -2767,9 +2777,16 @@ async function sendCurrentComposer(): Promise<void> {
 	clearComposerAttachments();
 	autosizePrompt();
 	setBusy(true);
-	showStreamingIndicator();
+	if (mode !== "queue") showStreamingIndicator();
 	try {
-		renderState(await window.piDesktop.prompt({ text: promptText, images }));
+		const payload = { text: promptText, images };
+		renderState(
+			await (mode === "queue"
+				? window.piDesktop.queuePrompt(payload)
+				: mode === "steer"
+					? window.piDesktop.steerPrompt(payload)
+					: window.piDesktop.prompt(payload)),
+		);
 		await refreshSessions();
 	} catch (error) {
 		showError(error);
@@ -2811,7 +2828,7 @@ promptInput.addEventListener("keydown", (event) => {
 		return;
 	}
 	event.preventDefault();
-	sendCurrentComposer().catch(showError);
+	sendCurrentComposer(event.metaKey || event.ctrlKey ? "steer" : isComposerBusy ? "queue" : "send").catch(showError);
 });
 
 promptInput.addEventListener("input", () => {

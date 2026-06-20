@@ -15,6 +15,12 @@ const api = {
 		ipcRenderer.invoke("pi:set-response-feedback", entryId, rating),
 	prompt: (message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> }) =>
 		ipcRenderer.invoke("pi:prompt", message),
+	queuePrompt: (
+		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
+	) => ipcRenderer.invoke("pi:queue-prompt", message),
+	steerPrompt: (
+		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
+	) => ipcRenderer.invoke("pi:steer-prompt", message),
 	abort: () => ipcRenderer.invoke("pi:abort"),
 	chooseContext: (kind: "files" | "folder" | "workspace") => ipcRenderer.invoke("pi:choose-context", kind),
 	setCwd: (cwd: string) => ipcRenderer.invoke("pi:set-cwd", cwd),
