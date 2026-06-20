@@ -1068,38 +1068,6 @@ body[data-platform="mac"] .sidebar-control-hit-area {
 	border-color: var(--nav-control-border);
 }
 
-.sidebar-feedback-link {
-	display: grid;
-	grid-template-columns: 18px minmax(0, 1fr);
-	align-items: center;
-	gap: 8px;
-	flex: 0 0 auto;
-	height: 32px;
-	min-height: 32px;
-	margin-top: 8px;
-	padding: 0 6px;
-	border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--nav-control-border));
-	border-radius: 9px;
-	background: color-mix(in srgb, var(--accent) 12%, transparent);
-	color: var(--nav-text);
-	font-size: 12.5px;
-	font-weight: 560;
-	text-decoration: none;
-	box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 8%, transparent);
-}
-
-.sidebar-feedback-link:hover,
-.sidebar-feedback-link:focus-visible {
-	background: color-mix(in srgb, var(--accent) 18%, transparent);
-	border-color: color-mix(in srgb, var(--accent) 48%, var(--nav-control-border));
-	color: var(--nav-text);
-}
-
-.sidebar-feedback-link > span:not(.button-icon) {
-	flex: 1;
-	min-width: 0;
-}
-
 .settings-action-icon {
 	display: grid;
 	place-items: center;
@@ -2846,15 +2814,6 @@ body.resizing-panels {
 .message-action-btn.active {
 	background: color-mix(in srgb, var(--ink) 9%, transparent);
 	color: var(--ink);
-}
-
-.message-action-btn.feedback-positive,
-.message-action-btn.feedback-negative {
-	display: none;
-}
-
-.message-action-btn.feedback-negative svg {
-	transform: rotate(180deg);
 }
 
 .message-action-btn.loading svg {
