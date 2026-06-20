@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -78,6 +79,18 @@ type DesktopState = {
 type DesktopLoginResult = {
 	state: DesktopState;
 	message: string;
+};
+
+type DesktopCurrentUser = {
+	name?: string;
+	email?: string;
+	photoUrl?: string;
+	endpoint?: string;
+};
+
+type DesktopGleanAuth = {
+	endpoint: string;
+	accessToken: string;
 };
 
 type DesktopSessionInfo = {
@@ -341,6 +354,69 @@ async function serializeContextSelections(paths: string[]): Promise<DesktopConte
 	);
 }
 
+function normalizeGleanBaseUrl(baseUrl: string): string {
+	const url = new URL(baseUrl);
+	return `${url.protocol}//${url.host}`;
+}
+
+function maybeString(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+async function fetchImageDataUrl(url: string, endpoint: string, accessToken: string): Promise<string | undefined> {
+	if (url.startsWith("data:")) return url;
+	if (!/^https?:\/\//i.test(url)) return undefined;
+	const imageUrl = new URL(url);
+	const endpointUrl = new URL(endpoint);
+	const headers = imageUrl.origin === endpointUrl.origin ? { Authorization: `Bearer ${accessToken}` } : undefined;
+	const response = await fetch(imageUrl.href, { headers });
+	if (!response.ok) return undefined;
+	const contentType = response.headers.get("content-type") || "image/png";
+	if (!contentType.startsWith("image/")) return undefined;
+	const bytes = Buffer.from(await response.arrayBuffer());
+	return `data:${contentType};base64,${bytes.toString("base64")}`;
+}
+
+async function getGleanAuth(): Promise<DesktopGleanAuth | undefined> {
+	await ensureDesktopSession();
+	const authStorage = getSession().modelRegistry.authStorage;
+	const credential = authStorage.get("glean") as { type?: string; baseUrl?: unknown } | undefined;
+	const baseUrl = credential?.type === "oauth" ? maybeString(credential.baseUrl) : undefined;
+	const accessToken = await authStorage.getApiKey("glean", { includeFallback: false });
+	if (!baseUrl || !accessToken) return undefined;
+	return { endpoint: normalizeGleanBaseUrl(baseUrl), accessToken };
+}
+
+async function fetchCurrentGleanUser(): Promise<DesktopCurrentUser | undefined> {
+	const auth = await getGleanAuth();
+	if (!auth) return undefined;
+	const { accessToken, endpoint } = auth;
+	const response = await fetch(`${endpoint}/api/v1/people?clientVersion=pi-desktop-${app.getVersion()}`, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ includeFields: ["PEOPLE_DETAILS", "PEOPLE_PROFILE_SETTINGS"] }),
+	});
+	if (!response.ok) throw new Error(`Unable to load current user (${response.status})`);
+	const result = (await response.json()) as {
+		results?: Array<{ name?: unknown; metadata?: Record<string, unknown> }>;
+	};
+	const person = result.results?.[0];
+	const metadata = person?.metadata;
+	const rawPhotoUrl = maybeString(metadata?.photoUrl) ?? maybeString(metadata?.uneditedPhotoUrl);
+	const photoUrl = rawPhotoUrl?.startsWith("/") ? new URL(rawPhotoUrl, endpoint).href : rawPhotoUrl;
+	return {
+		endpoint,
+		name:
+			maybeString(person?.name) ??
+			[maybeString(metadata?.firstName), maybeString(metadata?.lastName)].filter(Boolean).join(" "),
+		email: maybeString(metadata?.email),
+		photoUrl: photoUrl ? await fetchImageDataUrl(photoUrl, endpoint, accessToken).catch(() => photoUrl) : undefined,
+	};
+}
+
 function serializeState(): DesktopState {
 	const session = getSession();
 	const model = session.model;
@@ -362,6 +438,20 @@ function serializeState(): DesktopState {
 		pendingMessageCount: session.pendingMessageCount,
 		messageCount: session.messages.length,
 	};
+}
+
+function serializeSessionExport(): { exportedAt: string; state: DesktopState; messages: DesktopMessage[] } {
+	return {
+		exportedAt: new Date().toISOString(),
+		state: serializeState(),
+		messages: serializeVisibleMessages(),
+	};
+}
+
+async function getSessionLogText(): Promise<string> {
+	const sessionFile = getSession().sessionFile;
+	if (sessionFile && existsSync(sessionFile)) return readFile(sessionFile, "utf8");
+	return JSON.stringify(serializeSessionExport(), null, 2);
 }
 
 function send(channel: string, payload: unknown): void {
@@ -758,13 +848,12 @@ async function createWindow(): Promise<void> {
 						settingsPopover.querySelector("#cwd-input") !== null &&
 						settingsPopover.querySelector("#model-select") !== null &&
 						settingsPopover.querySelector("#theme-select") !== null &&
-						settingsPopover.querySelector("#settings-refresh-sessions") !== null &&
 						settingsPopover.querySelector("#settings-logout") !== null;
 					const settingsLogoutText = settingsPopover.querySelector("#settings-logout")?.textContent?.trim();
 					const settingsTriggerRect = rect(settingsTrigger);
 					const settingsPopoverRect = rect(settingsPopover);
 					const settingsInputRect = rect(settingsPopover.querySelector("#cwd-input"));
-					const settingsActionRect = rect(settingsPopover.querySelector("#settings-refresh-sessions"));
+					const settingsActionRect = rect(settingsPopover.querySelector("#settings-logout"));
 					const settingsPopoverFloatsAbove = settingsPopoverRect.bottom <= settingsTriggerRect.top - 4;
 					const settingsPopoverCompact = settingsPopoverRect.right - settingsPopoverRect.left <= 320;
 					const settingsControlsCompact =
@@ -1411,9 +1500,18 @@ ipcMain.handle("pi:get-state", async () => {
 	await ensureDesktopSession();
 	return serializeState();
 });
+ipcMain.handle("pi:get-current-user", async () => fetchCurrentGleanUser());
 ipcMain.handle("pi:get-messages", async () => {
 	await ensureDesktopSession();
 	return serializeVisibleMessages();
+});
+ipcMain.handle("pi:get-session-log", async () => {
+	await ensureDesktopSession();
+	return getSessionLogText();
+});
+ipcMain.handle("pi:get-session-deep-link", async () => {
+	await ensureDesktopSession();
+	return `pi://session/${encodeURIComponent(getSession().sessionId)}`;
 });
 ipcMain.handle("pi:list-sessions", async () => {
 	await ensureDesktopSession();

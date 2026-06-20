@@ -81,6 +81,13 @@ type DesktopLoginResult = {
 	message: string;
 };
 
+type DesktopCurrentUser = {
+	name?: string;
+	email?: string;
+	photoUrl?: string;
+	endpoint?: string;
+};
+
 type ComposerImageAttachment = {
 	id: string;
 	data: string;
@@ -102,7 +109,10 @@ type DesktopContextSelection =
 type PiDesktopApi = {
 	init(): Promise<DesktopState>;
 	getState(): Promise<DesktopState>;
+	getCurrentUser(): Promise<DesktopCurrentUser | undefined>;
 	getMessages(): Promise<DesktopMessage[]>;
+	getSessionLog(): Promise<string>;
+	getSessionDeepLink(): Promise<string>;
 	listSessions(): Promise<DesktopSessionInfo[]>;
 	newSession(): Promise<DesktopState>;
 	switchSession(sessionPath: string): Promise<DesktopState>;
@@ -152,6 +162,8 @@ const appEl = document.querySelector<HTMLDivElement>("#app")!;
 const sidebarSettings = document.querySelector<HTMLDivElement>(".sidebar-settings")!;
 const sidebarSettingsTrigger = document.querySelector<HTMLButtonElement>("#sidebar-settings-trigger")!;
 const sidebarSettingsPopover = document.querySelector<HTMLDivElement>("#sidebar-settings-popover")!;
+const sidebarUserAvatar = document.querySelector<HTMLSpanElement>("#sidebar-user-avatar")!;
+const sidebarSettingsLabel = document.querySelector<HTMLSpanElement>("#sidebar-settings-label")!;
 const toggleLeftPanelButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-left-panel-toggle]"));
 const toggleRightPanelButton = document.querySelector<HTMLButtonElement>("#toggle-right-panel")!;
 const toggleBottomPanelButton = document.querySelector<HTMLButtonElement>("#toggle-bottom-panel")!;
@@ -174,7 +186,6 @@ const bottomResizer = document.querySelector<HTMLDivElement>("#bottom-resizer")!
 const leftResizer = document.querySelector<HTMLDivElement>("#left-resizer")!;
 const rightResizer = document.querySelector<HTMLDivElement>("#right-resizer")!;
 const refreshSessionsButton = document.querySelector<HTMLButtonElement>("#refresh-sessions")!;
-const settingsRefreshSessionsButton = document.querySelector<HTMLButtonElement>("#settings-refresh-sessions")!;
 const settingsLogoutButton = document.querySelector<HTMLButtonElement>("#settings-logout")!;
 const sessionList = document.querySelector<HTMLDivElement>("#session-list")!;
 const modelSelect = document.querySelector<HTMLSelectElement>("#model-select")!;
@@ -184,6 +195,25 @@ const gitBranch = document.querySelector<HTMLDivElement>("#git-branch")!;
 const gitStatus = document.querySelector<HTMLDivElement>("#git-status")!;
 const refreshGitButton = document.querySelector<HTMLButtonElement>("#refresh-git")!;
 const sessionTitle = document.querySelector<HTMLDivElement>("#session-title")!;
+const sessionTitleInput = document.createElement("input");
+sessionTitleInput.className = "session-title-input";
+sessionTitleInput.type = "text";
+sessionTitleInput.maxLength = 120;
+sessionTitleInput.hidden = true;
+sessionTitle.after(sessionTitleInput);
+const sessionMenuTrigger = document.querySelector<HTMLButtonElement>("#session-menu-trigger")!;
+const sessionMenu = document.querySelector<HTMLDivElement>("#session-menu")!;
+const sessionMenuPin = document.querySelector<HTMLButtonElement>("#session-menu-pin")!;
+const sessionMenuRename = document.querySelector<HTMLButtonElement>("#session-menu-rename")!;
+const sessionMenuCopyCwd = document.querySelector<HTMLButtonElement>("#session-menu-copy-cwd")!;
+const sessionMenuCopyId = document.querySelector<HTMLButtonElement>("#session-menu-copy-id")!;
+const sessionMenuCopyLink = document.querySelector<HTMLButtonElement>("#session-menu-copy-link")!;
+const sessionMenuCopyMarkdown = document.querySelector<HTMLButtonElement>("#session-menu-copy-markdown")!;
+const sessionMenuCopyDebugLog = document.querySelector<HTMLButtonElement>("#session-menu-copy-debug-log")!;
+const sessionMenuArchive = document.querySelector<HTMLButtonElement>("#session-menu-archive")!;
+const sessionRenameForm = document.querySelector<HTMLFormElement>("#session-rename-form")!;
+const sessionRenameInput = document.querySelector<HTMLInputElement>("#session-rename-input")!;
+const sessionRenameCancel = document.querySelector<HTMLButtonElement>("#session-rename-cancel")!;
 const composerAddButton = document.querySelector<HTMLButtonElement>("#composer-add")!;
 const composerAddMenu = document.querySelector<HTMLDivElement>("#composer-add-menu")!;
 const composerModelButton = document.querySelector<HTMLButtonElement>("#composer-model")!;
@@ -228,10 +258,12 @@ document.body.append(imagePreviewOverlay);
 let state: DesktopState | undefined;
 let models: DesktopModel[] = [];
 let sessions: DesktopSessionInfo[] = [];
+let currentMessages: DesktopMessage[] = [];
 let composerImages: ComposerImageAttachment[] = [];
 let composerFiles: ComposerFileAttachment[] = [];
 let switchingSessionPath: string | undefined;
 let renderedSessionId: string | undefined;
+let isEditingSessionTitle = false;
 const completedToolExecutions = new Map<string, { isError: boolean }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
@@ -244,6 +276,11 @@ const projectSessionLimits = new Map<string, number>();
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 const themeStorageKey = "pi-desktop-theme";
 const layoutStorageKey = "pi-desktop-layout";
+const pinnedSessionsStorageKey = "pi-pinned-sessions";
+const archivedSessionsStorageKey = "pi-archived-sessions";
+const pinnedSessionKeys = new Set<string>(JSON.parse(localStorage.getItem(pinnedSessionsStorageKey) || "[]"));
+const archivedSessionKeys = new Set<string>(JSON.parse(localStorage.getItem(archivedSessionsStorageKey) || "[]"));
+let showArchivedSessions = false;
 const minLeftPanelWidth = 340;
 const maxLeftPanelWidth = 520;
 const minRightPanelWidth = 240;
@@ -453,6 +490,49 @@ function shortId(id?: string): string {
 function modelDisplay(state: DesktopState): string {
 	if (!state.model) return "No model selected";
 	return `${state.model.id} · ${state.thinkingLevel ?? "off"}`;
+}
+
+function initialsForName(value: unknown): string {
+	const parts = String(value ?? "")
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean);
+	return (
+		parts.length > 1 ? `${parts[0]![0]}${parts[parts.length - 1]![0]}` : parts[0]?.slice(0, 2) || "?"
+	).toUpperCase();
+}
+
+function renderCurrentUser(user: DesktopCurrentUser | undefined): void {
+	const name = user?.name || user?.email || "Settings";
+	sidebarSettingsLabel.textContent = user?.name || "Settings";
+	sidebarSettingsTrigger.title = user?.email ? `${name} · ${user.email}` : name;
+	sidebarSettingsTrigger.setAttribute("aria-label", `Open settings for ${name}`);
+	sidebarUserAvatar.replaceChildren();
+	if (user?.photoUrl) {
+		const image = document.createElement("img");
+		image.src = user.photoUrl;
+		image.alt = "";
+		image.referrerPolicy = "no-referrer";
+		image.addEventListener("error", () => {
+			const fallback = document.createElement("span");
+			fallback.textContent = initialsForName(name);
+			sidebarUserAvatar.replaceChildren(fallback);
+		});
+		sidebarUserAvatar.append(image);
+		return;
+	}
+	const fallback = document.createElement("span");
+	fallback.textContent = initialsForName(name);
+	sidebarUserAvatar.append(fallback);
+}
+
+async function refreshCurrentUser(): Promise<void> {
+	try {
+		renderCurrentUser(await window.piDesktop.getCurrentUser());
+	} catch (error) {
+		console.warn("[desktop] failed to fetch current user", error);
+		renderCurrentUser(undefined);
+	}
 }
 
 function setMenuOpen(button: HTMLButtonElement, menu: HTMLElement, open: boolean): void {
@@ -1288,6 +1368,8 @@ function createToolGroup(
 }
 
 function renderMessages(messages: DesktopMessage[]): void {
+	currentMessages = messages;
+	syncSessionMenu();
 	const sessionChanged = renderedSessionId !== state?.sessionId;
 	const followAfterRender = sessionChanged || shouldFollowMessages || isMessagesScrolledToBottom();
 	const previousScrollTop = messagesEl.scrollTop;
@@ -1410,10 +1492,114 @@ function renderState(next: DesktopState): void {
 }
 
 function updateSessionTitle(): void {
-	const activeSession = sessions.find((session) => session.id === state?.sessionId);
-	const title = state?.sessionName || activeSession?.name || activeSession?.firstMessage || "New chat";
+	if (isEditingSessionTitle) return;
+	const title = sessionDisplayTitle(activeSession(), "New chat");
 	sessionTitle.textContent = title;
+	sessionTitle.title = title;
 	document.title = `${title} - Pi Desktop`;
+	syncSessionMenu();
+}
+
+function activeSession(): DesktopSessionInfo | undefined {
+	return sessions.find((session) => isActiveSession(session));
+}
+
+function isActiveSession(session: DesktopSessionInfo | undefined): boolean {
+	if (!session) return false;
+	return Boolean(
+		(state?.sessionId && session.id === state.sessionId) ||
+			(state?.sessionFile && session.path === state.sessionFile),
+	);
+}
+
+function sessionDisplayTitle(session: DesktopSessionInfo | undefined, fallback = "Untitled session"): string {
+	const activeName = session && isActiveSession(session) ? state?.sessionName : undefined;
+	const raw = activeName || session?.name || session?.firstMessage || fallback;
+	return compactInferredSessionTitle(raw);
+}
+
+function compactInferredSessionTitle(value: string, maxLength = 42): string {
+	const normalized = value.replace(/\s+/g, " ").trim();
+	if (normalized.length <= maxLength) return normalized;
+	const clipped = normalized.slice(0, maxLength - 3);
+	const wordBoundary = clipped.lastIndexOf(" ");
+	const prefix = wordBoundary >= 18 ? clipped.slice(0, wordBoundary) : clipped;
+	return `${prefix.trimEnd()}...`;
+}
+
+function sessionIdentityKeys(session: DesktopSessionInfo | undefined): string[] {
+	return [session?.path, session?.id].filter((value): value is string => Boolean(value));
+}
+
+function sessionStorageKey(session: DesktopSessionInfo | undefined): string | undefined {
+	return session?.path || session?.id;
+}
+
+function persistSessionKeys(storageKey: string, values: Set<string>): void {
+	localStorage.setItem(storageKey, JSON.stringify([...values]));
+}
+
+function isSessionPinned(session: DesktopSessionInfo | undefined): boolean {
+	return sessionIdentityKeys(session).some((key) => pinnedSessionKeys.has(key));
+}
+
+function isSessionArchived(session: DesktopSessionInfo | undefined): boolean {
+	return sessionIdentityKeys(session).some((key) => archivedSessionKeys.has(key));
+}
+
+function setSessionPinned(session: DesktopSessionInfo | undefined, pinned: boolean): void {
+	const key = sessionStorageKey(session);
+	if (!key) return;
+	if (pinned) {
+		pinnedSessionKeys.add(key);
+		for (const identityKey of sessionIdentityKeys(session)) archivedSessionKeys.delete(identityKey);
+	} else {
+		for (const identityKey of sessionIdentityKeys(session)) pinnedSessionKeys.delete(identityKey);
+	}
+	persistSessionKeys(pinnedSessionsStorageKey, pinnedSessionKeys);
+	persistSessionKeys(archivedSessionsStorageKey, archivedSessionKeys);
+	syncSessionMenu();
+	renderSessionList();
+}
+
+function setSessionArchived(session: DesktopSessionInfo | undefined, archived: boolean): void {
+	const key = sessionStorageKey(session);
+	if (!key) return;
+	if (archived) {
+		archivedSessionKeys.add(key);
+		for (const identityKey of sessionIdentityKeys(session)) pinnedSessionKeys.delete(identityKey);
+	} else {
+		for (const identityKey of sessionIdentityKeys(session)) archivedSessionKeys.delete(identityKey);
+	}
+	persistSessionKeys(archivedSessionsStorageKey, archivedSessionKeys);
+	persistSessionKeys(pinnedSessionsStorageKey, pinnedSessionKeys);
+}
+
+function modifiedSessionTime(session: DesktopSessionInfo | undefined): number {
+	return new Date(session?.modified ?? 0).getTime();
+}
+
+function syncSessionMenu(): void {
+	const session = activeSession();
+	const hasSession = Boolean(session && state?.sessionId);
+	sessionMenuTrigger.disabled = !hasSession;
+	for (const button of [
+		sessionMenuPin,
+		sessionMenuRename,
+		sessionMenuCopyCwd,
+		sessionMenuCopyId,
+		sessionMenuCopyLink,
+		sessionMenuCopyMarkdown,
+		sessionMenuCopyDebugLog,
+		sessionMenuArchive,
+	]) {
+		button.disabled = !hasSession;
+	}
+	const pinned = isSessionPinned(session);
+	sessionMenuTrigger.classList.toggle("pinned", pinned);
+	sessionMenuPin.querySelector("span:last-child")!.textContent = pinned ? "Unpin chat" : "Pin chat";
+	sessionMenuPin.setAttribute("aria-pressed", pinned ? "true" : "false");
+	if (!hasSession) closeSessionMenu();
 }
 
 function renderModels(): void {
@@ -1495,26 +1681,29 @@ function renderModels(): void {
 
 function renderSessionList(): void {
 	sessionList.innerHTML = "";
-	if (sessions.length === 0) {
+	const visibleSessions = sessions.filter((session) => showArchivedSessions || !isSessionArchived(session));
+	const archivedCount = sessions.filter((session) => isSessionArchived(session)).length;
+	if (visibleSessions.length === 0) {
 		const empty = document.createElement("div");
 		empty.className = "session-empty";
-		empty.textContent = "No saved sessions in this store yet.";
+		empty.textContent = showArchivedSessions ? "No archived chats yet." : "No saved chats in this store yet.";
 		sessionList.append(empty);
-		return;
 	}
 
 	const groups = new Map<string, DesktopSessionInfo[]>();
-	for (const session of sessions) {
+	for (const session of visibleSessions) {
 		const group = groups.get(session.cwd) ?? [];
 		group.push(session);
 		groups.set(session.cwd, group);
 	}
-	const modifiedTime = (session: DesktopSessionInfo | undefined): number => new Date(session?.modified ?? 0).getTime();
 	for (const projectSessions of groups.values()) {
-		projectSessions.sort((a, b) => modifiedTime(b) - modifiedTime(a));
+		projectSessions.sort(
+			(a, b) =>
+				Number(isSessionPinned(b)) - Number(isSessionPinned(a)) || modifiedSessionTime(b) - modifiedSessionTime(a),
+		);
 	}
 	const orderedGroups = [...groups.entries()].sort(([, sessionsA], [, sessionsB]) => {
-		return modifiedTime(sessionsB[0]) - modifiedTime(sessionsA[0]);
+		return modifiedSessionTime(sessionsB[0]) - modifiedSessionTime(sessionsA[0]);
 	});
 	const currentProjectKeys = new Set(orderedGroups.map(([cwd]) => cwd));
 	for (const cwd of projectSessionLimits.keys()) {
@@ -1536,42 +1725,11 @@ function renderSessionList(): void {
 		heading.append(icon, label);
 		sessionList.append(heading);
 
-		const activeIndex = projectSessions.findIndex((session) => session.id === state?.sessionId);
+		const activeIndex = projectSessions.findIndex((session) => isActiveSession(session));
 		const defaultLimit = activeIndex >= projectSessionPageSize ? activeIndex + 1 : projectSessionPageSize;
 		const visibleLimit = Math.min(projectSessionLimits.get(cwd) ?? defaultLimit, projectSessions.length);
 		for (const session of projectSessions.slice(0, visibleLimit)) {
-			const button = document.createElement("button");
-			button.type = "button";
-			button.disabled = session.path === switchingSessionPath;
-			button.className = `session-item ${session.id === state?.sessionId ? "active" : ""} ${
-				session.path === switchingSessionPath ? "loading" : ""
-			}`;
-			const title = session.name || session.firstMessage || "Untitled session";
-			const titleEl = document.createElement("span");
-			titleEl.className = "session-item-title";
-			titleEl.textContent = title;
-			const metaEl = document.createElement("span");
-			metaEl.className = "session-item-meta";
-			if (session.path === switchingSessionPath) {
-				metaEl.textContent = "Loading...";
-			} else {
-				const timeSpan = document.createElement("span");
-				timeSpan.className = "session-item-time";
-				timeSpan.textContent = formatRelative(session.modified);
-				const msgSpan = document.createElement("span");
-				msgSpan.className = "session-item-messages";
-				msgSpan.textContent = `${session.messageCount} msg`;
-				metaEl.append(timeSpan, msgSpan);
-			}
-			button.append(titleEl, metaEl);
-			button.addEventListener("click", async () => {
-				try {
-					await switchToSession(session.path);
-				} catch (error) {
-					showError(error);
-				}
-			});
-			sessionList.append(button);
+			sessionList.append(createSessionListItem(session));
 		}
 		if (projectSessions.length > projectSessionPageSize) {
 			const controls = document.createElement("div");
@@ -1602,6 +1760,93 @@ function renderSessionList(): void {
 			sessionList.append(controls);
 		}
 	}
+	if (archivedCount > 0) {
+		const archivedToggle = document.createElement("button");
+		archivedToggle.type = "button";
+		archivedToggle.className = "archived-sessions-toggle";
+		archivedToggle.textContent = showArchivedSessions ? "Hide archived chats" : `Show ${archivedCount} archived`;
+		archivedToggle.addEventListener("click", () => {
+			showArchivedSessions = !showArchivedSessions;
+			renderSessionList();
+		});
+		sessionList.append(archivedToggle);
+	}
+	syncSessionMenu();
+}
+
+function createSessionListItem(session: DesktopSessionInfo): HTMLElement {
+	const row = document.createElement("div");
+	row.className = `session-item-row ${isActiveSession(session) ? "active" : ""} ${
+		session.path === switchingSessionPath ? "loading" : ""
+	} ${isSessionPinned(session) ? "pinned" : ""} ${isSessionArchived(session) ? "archived" : ""}`;
+	const button = document.createElement("button");
+	button.type = "button";
+	button.disabled = session.path === switchingSessionPath;
+	button.className = "session-item";
+	const title = sessionDisplayTitle(session);
+	const titleEl = document.createElement("span");
+	titleEl.className = "session-item-title";
+	const titleText = document.createElement("span");
+	titleText.className = "session-item-title-text";
+	titleText.textContent = title;
+	titleEl.append(titleText);
+	const metaEl = document.createElement("span");
+	metaEl.className = "session-item-meta";
+	if (session.path === switchingSessionPath) {
+		metaEl.textContent = "Loading...";
+	} else {
+		const timeSpan = document.createElement("span");
+		timeSpan.className = "session-item-time";
+		timeSpan.textContent = formatRelative(session.modified);
+		const msgSpan = document.createElement("span");
+		msgSpan.className = "session-item-messages";
+		msgSpan.textContent = `${session.messageCount} msg`;
+		metaEl.append(timeSpan, msgSpan);
+	}
+	button.append(titleEl, metaEl);
+	button.addEventListener("click", async () => {
+		try {
+			await switchToSession(session.path);
+		} catch (error) {
+			showError(error);
+		}
+	});
+
+	const actions = document.createElement("div");
+	actions.className = "session-item-actions";
+	const pinButton = document.createElement("button");
+	pinButton.type = "button";
+	pinButton.className = "session-row-action session-pin-button";
+	pinButton.title = isSessionPinned(session) ? "Unpin chat" : "Pin chat";
+	pinButton.setAttribute("aria-label", pinButton.title);
+	pinButton.setAttribute("aria-pressed", isSessionPinned(session) ? "true" : "false");
+	pinButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 4 6 6-4 1-4 7-2-2 7-4 1-4-6-6Z" /><path d="m4 20 6-6" /></svg>`;
+	pinButton.addEventListener("click", (event) => {
+		event.stopPropagation();
+		setSessionPinned(session, !isSessionPinned(session));
+	});
+	const archiveButton = document.createElement("button");
+	archiveButton.type = "button";
+	archiveButton.className = "session-row-action";
+	archiveButton.title = isSessionArchived(session) ? "Unarchive chat" : "Archive chat";
+	archiveButton.setAttribute("aria-label", archiveButton.title);
+	archiveButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg>`;
+	archiveButton.addEventListener("click", async (event) => {
+		event.stopPropagation();
+		try {
+			if (isSessionArchived(session)) {
+				setSessionArchived(session, false);
+				renderSessionList();
+			} else {
+				await archiveSession(session);
+			}
+		} catch (error) {
+			showError(error);
+		}
+	});
+	actions.append(pinButton, archiveButton);
+	row.append(button, actions);
+	return row;
 }
 
 function renderGit(status: GitStatus): void {
@@ -1674,6 +1919,129 @@ async function switchToSession(sessionPath: string): Promise<void> {
 		renderSessionList();
 		messagesEl.classList.remove("loading-session");
 	}
+}
+
+function setSessionMenuOpen(open: boolean): void {
+	sessionMenu.hidden = !open;
+	sessionMenuTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+	if (!open) {
+		sessionRenameForm.hidden = true;
+		sessionMenu.querySelector<HTMLDivElement>(".session-menu-actions")!.hidden = false;
+	}
+}
+
+function closeSessionMenu(): void {
+	setSessionMenuOpen(false);
+}
+
+function conversationMarkdown(): string {
+	return currentMessages
+		.filter((message) => message.role === "user" || message.role === "assistant")
+		.map((message) => {
+			const text = contentText(message).trim();
+			if (!text) return "";
+			return `## ${message.role === "user" ? "You" : "Pi"}\n\n${text}`;
+		})
+		.filter(Boolean)
+		.join("\n\n");
+}
+
+async function copySessionMenuText(button: HTMLButtonElement, text: string | undefined): Promise<void> {
+	if (!text) return;
+	await navigator.clipboard.writeText(text);
+	const label = button.querySelector("span:last-child");
+	const previous = label?.textContent ?? "";
+	if (label) label.textContent = "Copied";
+	closeSessionMenu();
+	if (label && previous) {
+		window.setTimeout(() => {
+			label.textContent = previous;
+		}, 1500);
+	}
+}
+
+function showSessionRenameForm(): void {
+	const session = activeSession();
+	if (!session || isEditingSessionTitle) return;
+	closeSessionMenu();
+	const originalTitle = sessionDisplayTitle(session);
+	isEditingSessionTitle = true;
+	sessionTitle.hidden = true;
+	sessionTitleInput.hidden = false;
+	sessionTitleInput.value = originalTitle;
+	sessionTitleInput.focus();
+	sessionTitleInput.select();
+
+	const stopEditing = (save: boolean): void => {
+		sessionTitleInput.removeEventListener("blur", onBlur);
+		sessionTitleInput.removeEventListener("keydown", onKeydown);
+		sessionTitleInput.hidden = true;
+		sessionTitle.hidden = false;
+		isEditingSessionTitle = false;
+		if (save) {
+			const nextName = sessionTitleInput.value.trim();
+			if (nextName && nextName !== originalTitle) {
+				window.piDesktop
+					.setSessionName(nextName)
+					.then((next) => {
+						renderState(next);
+						return refreshSessions();
+					})
+					.catch(showError);
+			} else {
+				updateSessionTitle();
+			}
+		} else {
+			updateSessionTitle();
+		}
+	};
+	const onBlur = (): void => stopEditing(true);
+	const onKeydown = (event: KeyboardEvent): void => {
+		if (event.key === "Enter") {
+			event.preventDefault();
+			stopEditing(true);
+		}
+		if (event.key === "Escape") {
+			event.preventDefault();
+			stopEditing(false);
+		}
+	};
+	sessionTitleInput.addEventListener("blur", onBlur);
+	sessionTitleInput.addEventListener("keydown", onKeydown);
+}
+
+function nextSessionInProjectAfterArchive(session: DesktopSessionInfo): DesktopSessionInfo | undefined {
+	return sessions
+		.filter(
+			(candidate) => candidate.cwd === session.cwd && !isActiveSession(candidate) && !isSessionArchived(candidate),
+		)
+		.sort(
+			(a, b) =>
+				Number(isSessionPinned(b)) - Number(isSessionPinned(a)) || modifiedSessionTime(b) - modifiedSessionTime(a),
+		)[0];
+}
+
+async function archiveSession(session: DesktopSessionInfo): Promise<void> {
+	const wasActive = isActiveSession(session);
+	if (wasActive && isComposerBusy) {
+		await abortCurrentRun();
+	}
+	setSessionArchived(session, true);
+	if (!wasActive) {
+		renderSessionList();
+		syncSessionMenu();
+		return;
+	}
+	const nextSession = nextSessionInProjectAfterArchive(session);
+	if (nextSession?.path) {
+		await switchToSession(nextSession.path);
+		return;
+	}
+	if (state?.cwd !== session.cwd) {
+		renderState(await window.piDesktop.setCwd(session.cwd));
+	}
+	renderState(await window.piDesktop.newSession());
+	await refreshAfterSessionChange();
 }
 
 function showError(error: unknown): void {
@@ -2140,6 +2508,7 @@ sidebarSettingsTrigger.addEventListener("click", (event) => {
 	event.preventDefault();
 	event.stopPropagation();
 	closeComposerMenus();
+	closeSessionMenu();
 	toggleSettingsPopover();
 });
 
@@ -2382,6 +2751,7 @@ document.addEventListener("keydown", (event) => {
 function toggleComposerMenu(button: HTMLButtonElement, menu: HTMLElement): void {
 	const nextOpen = menu.hidden;
 	closeComposerMenus();
+	closeSessionMenu();
 	setMenuOpen(button, menu, nextOpen);
 }
 
@@ -2434,6 +2804,83 @@ composerModelMenu.addEventListener("click", (event) => {
 	event.stopPropagation();
 });
 
+sessionMenuTrigger.addEventListener("click", (event) => {
+	event.stopPropagation();
+	closeComposerMenus();
+	closeSettingsPopover();
+	setSessionMenuOpen(sessionMenu.hidden);
+});
+
+sessionMenu.addEventListener("click", (event) => {
+	event.stopPropagation();
+});
+
+sessionMenuPin.addEventListener("click", () => {
+	const session = activeSession();
+	setSessionPinned(session, !isSessionPinned(session));
+	closeSessionMenu();
+});
+
+sessionMenuRename.addEventListener("click", () => {
+	showSessionRenameForm();
+});
+
+sessionMenuCopyCwd.addEventListener("click", () => {
+	copySessionMenuText(sessionMenuCopyCwd, activeSession()?.cwd).catch(showError);
+});
+
+sessionMenuCopyId.addEventListener("click", () => {
+	copySessionMenuText(sessionMenuCopyId, state?.sessionId || activeSession()?.id).catch(showError);
+});
+
+sessionMenuCopyLink.addEventListener("click", async () => {
+	try {
+		await copySessionMenuText(sessionMenuCopyLink, await window.piDesktop.getSessionDeepLink());
+	} catch (error) {
+		showError(error);
+	}
+});
+
+sessionMenuCopyMarkdown.addEventListener("click", () => {
+	copySessionMenuText(sessionMenuCopyMarkdown, conversationMarkdown()).catch(showError);
+});
+
+sessionMenuCopyDebugLog.addEventListener("click", async () => {
+	try {
+		await copySessionMenuText(sessionMenuCopyDebugLog, await window.piDesktop.getSessionLog());
+	} catch (error) {
+		showError(error);
+	}
+});
+
+sessionMenuArchive.addEventListener("click", async () => {
+	try {
+		const session = activeSession();
+		if (session) await archiveSession(session);
+		closeSessionMenu();
+	} catch (error) {
+		showError(error);
+	}
+});
+
+sessionRenameCancel.addEventListener("click", () => {
+	closeSessionMenu();
+});
+
+sessionRenameForm.addEventListener("submit", async (event) => {
+	event.preventDefault();
+	try {
+		const nextName = sessionRenameInput.value.trim();
+		if (nextName) {
+			renderState(await window.piDesktop.setSessionName(nextName));
+			await refreshSessions();
+		}
+		closeSessionMenu();
+	} catch (error) {
+		showError(error);
+	}
+});
+
 document.addEventListener("click", (event) => {
 	if (
 		event.target instanceof Node &&
@@ -2441,11 +2888,14 @@ document.addEventListener("click", (event) => {
 			composerAddMenu.contains(event.target) ||
 			composerModelButton.contains(event.target) ||
 			composerModelMenu.contains(event.target) ||
+			sessionMenuTrigger.contains(event.target) ||
+			sessionMenu.contains(event.target) ||
 			sidebarSettings.contains(event.target))
 	) {
 		return;
 	}
 	closeComposerMenus();
+	closeSessionMenu();
 	closeSettingsPopover();
 });
 
@@ -2453,6 +2903,7 @@ document.addEventListener("keydown", (event) => {
 	if (event.key === "Escape") {
 		closeImagePreview();
 		closeComposerMenus();
+		closeSessionMenu();
 		closeSettingsPopover();
 		promptInput.focus();
 	}
@@ -2484,15 +2935,12 @@ refreshSessionsButton.addEventListener("click", () => {
 	refreshSessions().catch(showError);
 });
 
-settingsRefreshSessionsButton.addEventListener("click", () => {
-	refreshSessions().catch(showError);
-});
-
 settingsLogoutButton.addEventListener("click", async () => {
 	try {
 		closeSettingsPopover();
 		const result = await window.piDesktop.logout();
 		renderState(result.state);
+		renderCurrentUser(undefined);
 		await refreshModels();
 	} catch (error) {
 		showError(error);
@@ -2505,6 +2953,7 @@ loginButton.addEventListener("click", async () => {
 	try {
 		const result = await window.piDesktop.login();
 		renderState(result.state);
+		void refreshCurrentUser();
 		await refreshAfterSessionChange();
 		loginStatus.textContent = "";
 	} catch (error) {
@@ -2535,6 +2984,7 @@ async function boot(): Promise<void> {
 	syncBottomPanelContent();
 	applyTheme();
 	renderState(await window.piDesktop.init());
+	void refreshCurrentUser();
 	await refreshAfterSessionChange();
 }
 

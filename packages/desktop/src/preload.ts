@@ -3,7 +3,10 @@ import { contextBridge, ipcRenderer } from "electron";
 const api = {
 	init: () => ipcRenderer.invoke("pi:init"),
 	getState: () => ipcRenderer.invoke("pi:get-state"),
+	getCurrentUser: () => ipcRenderer.invoke("pi:get-current-user"),
 	getMessages: () => ipcRenderer.invoke("pi:get-messages"),
+	getSessionLog: () => ipcRenderer.invoke("pi:get-session-log"),
+	getSessionDeepLink: () => ipcRenderer.invoke("pi:get-session-deep-link"),
 	listSessions: () => ipcRenderer.invoke("pi:list-sessions"),
 	newSession: () => ipcRenderer.invoke("pi:new-session"),
 	switchSession: (sessionPath: string) => ipcRenderer.invoke("pi:switch-session", sessionPath),
