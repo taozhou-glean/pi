@@ -175,10 +175,13 @@ const rightPanelTabs = Array.from(document.querySelectorAll<HTMLButtonElement>("
 const rightPanelPanes = Array.from(document.querySelectorAll<HTMLElement>("[data-right-panel-pane]"));
 const bottomPanelTabs = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-bottom-panel-tab]"));
 const bottomPanelPanes = Array.from(document.querySelectorAll<HTMLElement>("[data-bottom-panel-pane]"));
+const browserHomeUrl = "https://app.glean.com";
+const browserHomeButton = document.querySelector<HTMLButtonElement>("#browser-home")!;
 const browserUrlInput = document.querySelector<HTMLInputElement>("#browser-url")!;
 const browserGoButton = document.querySelector<HTMLButtonElement>("#browser-go")!;
 const browserFrame = document.querySelector<HTMLElement>("#browser-frame")!;
 const bottomBrowserBar = document.querySelector<HTMLDivElement>(".bottom-browser-bar")!;
+const bottomBrowserHomeButton = document.querySelector<HTMLButtonElement>("#bottom-browser-home")!;
 const bottomBrowserUrlInput = document.querySelector<HTMLInputElement>("#bottom-browser-url")!;
 const bottomBrowserGoButton = document.querySelector<HTMLButtonElement>("#bottom-browser-go")!;
 const bottomBrowserFrame = document.querySelector<HTMLElement>("#bottom-browser-frame")!;
@@ -186,8 +189,10 @@ const bottomResizer = document.querySelector<HTMLDivElement>("#bottom-resizer")!
 const leftResizer = document.querySelector<HTMLDivElement>("#left-resizer")!;
 const rightResizer = document.querySelector<HTMLDivElement>("#right-resizer")!;
 const refreshSessionsButton = document.querySelector<HTMLButtonElement>("#refresh-sessions")!;
+const addProjectButton = document.querySelector<HTMLButtonElement>("#add-project")!;
 const settingsLogoutButton = document.querySelector<HTMLButtonElement>("#settings-logout")!;
 const sessionList = document.querySelector<HTMLDivElement>("#session-list")!;
+const sessionSearchInput = document.querySelector<HTMLInputElement>("#session-search")!;
 const modelSelect = document.querySelector<HTMLSelectElement>("#model-select")!;
 const modelMeta = document.querySelector<HTMLDivElement>("#model-meta")!;
 const themeSelect = document.querySelector<HTMLSelectElement>("#theme-select")!;
@@ -273,6 +278,7 @@ let isAbortingRun = false;
 const messagePageSize = 120;
 const projectSessionPageSize = 5;
 const projectSessionLimits = new Map<string, number>();
+const collapsedProjects = new Set<string>(JSON.parse(localStorage.getItem("pi-collapsed-projects") || "[]"));
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 const themeStorageKey = "pi-desktop-theme";
 const layoutStorageKey = "pi-desktop-layout";
@@ -1579,6 +1585,20 @@ function modifiedSessionTime(session: DesktopSessionInfo | undefined): number {
 	return new Date(session?.modified ?? 0).getTime();
 }
 
+function sessionMatchesSearch(session: DesktopSessionInfo, query: string): boolean {
+	if (!query) return true;
+	const title = session.name || session.firstMessage || "Untitled session";
+	return `${title} ${session.cwd}`.toLowerCase().includes(query);
+}
+
+function pinnedSessionIndex(session: DesktopSessionInfo): number {
+	const order = [...pinnedSessionKeys];
+	const indexes = sessionIdentityKeys(session)
+		.map((key) => order.indexOf(key))
+		.filter((index) => index >= 0);
+	return indexes.length > 0 ? Math.min(...indexes) : Number.MAX_SAFE_INTEGER;
+}
+
 function syncSessionMenu(): void {
 	const session = activeSession();
 	const hasSession = Boolean(session && state?.sessionId);
@@ -1597,6 +1617,7 @@ function syncSessionMenu(): void {
 	}
 	const pinned = isSessionPinned(session);
 	sessionMenuTrigger.classList.toggle("pinned", pinned);
+	sessionMenuPin.classList.toggle("active", pinned);
 	sessionMenuPin.querySelector("span:last-child")!.textContent = pinned ? "Unpin chat" : "Pin chat";
 	sessionMenuPin.setAttribute("aria-pressed", pinned ? "true" : "false");
 	if (!hasSession) closeSessionMenu();
@@ -1681,29 +1702,53 @@ function renderModels(): void {
 
 function renderSessionList(): void {
 	sessionList.innerHTML = "";
-	const visibleSessions = sessions.filter((session) => showArchivedSessions || !isSessionArchived(session));
-	const archivedCount = sessions.filter((session) => isSessionArchived(session)).length;
-	if (visibleSessions.length === 0) {
+	if (sessions.length === 0) {
 		const empty = document.createElement("div");
 		empty.className = "session-empty";
-		empty.textContent = showArchivedSessions ? "No archived chats yet." : "No saved chats in this store yet.";
+		empty.textContent = "No saved chats in this store yet.";
 		sessionList.append(empty);
+		syncSessionMenu();
+		return;
+	}
+
+	const query = sessionSearchInput.value.trim().toLowerCase();
+	const matchingSessions = sessions.filter((session) => sessionMatchesSearch(session, query));
+	if (matchingSessions.length === 0) {
+		const empty = document.createElement("div");
+		empty.className = "session-empty";
+		empty.textContent = "No matching chats.";
+		sessionList.append(empty);
+		syncSessionMenu();
+		return;
+	}
+
+	const archivedSessions = matchingSessions
+		.filter((session) => isSessionArchived(session))
+		.sort((a, b) => modifiedSessionTime(b) - modifiedSessionTime(a));
+	const activeSessions = matchingSessions.filter((session) => !isSessionArchived(session));
+	const pinnedSessions = activeSessions
+		.filter((session) => isSessionPinned(session))
+		.sort((a, b) => pinnedSessionIndex(a) - pinnedSessionIndex(b) || modifiedSessionTime(b) - modifiedSessionTime(a));
+	if (pinnedSessions.length > 0) {
+		const pinnedHeading = document.createElement("div");
+		pinnedHeading.className = "session-section-heading";
+		pinnedHeading.textContent = "Pinned";
+		sessionList.append(pinnedHeading);
+		for (const session of pinnedSessions) sessionList.append(createSessionListItem(session));
 	}
 
 	const groups = new Map<string, DesktopSessionInfo[]>();
-	for (const session of visibleSessions) {
+	for (const session of activeSessions) {
+		if (isSessionPinned(session)) continue;
 		const group = groups.get(session.cwd) ?? [];
 		group.push(session);
 		groups.set(session.cwd, group);
 	}
 	for (const projectSessions of groups.values()) {
-		projectSessions.sort(
-			(a, b) =>
-				Number(isSessionPinned(b)) - Number(isSessionPinned(a)) || modifiedSessionTime(b) - modifiedSessionTime(a),
-		);
+		projectSessions.sort((a, b) => modifiedSessionTime(b) - modifiedSessionTime(a));
 	}
-	const orderedGroups = [...groups.entries()].sort(([, sessionsA], [, sessionsB]) => {
-		return modifiedSessionTime(sessionsB[0]) - modifiedSessionTime(sessionsA[0]);
+	const orderedGroups = [...groups.entries()].sort(([cwdA], [cwdB]) => {
+		return basename(cwdA).localeCompare(basename(cwdB));
 	});
 	const currentProjectKeys = new Set(orderedGroups.map(([cwd]) => cwd));
 	for (const cwd of projectSessionLimits.keys()) {
@@ -1713,17 +1758,53 @@ function renderSessionList(): void {
 	}
 
 	for (const [cwd, projectSessions] of orderedGroups) {
+		const projectCollapsed = !query && collapsedProjects.has(cwd);
 		const heading = document.createElement("div");
-		heading.className = `session-group-heading ${cwd === state?.cwd ? "current" : ""}`;
+		heading.className = `session-group-heading ${cwd === state?.cwd ? "current" : ""} ${
+			projectCollapsed ? "collapsed" : ""
+		}`;
 		const icon = document.createElement("span");
 		icon.className = "project-icon";
-		icon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5V18a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7.2L9.8 5H5a2 2 0 0 0-2 2.5Z" /></svg>`;
+		icon.innerHTML = projectCollapsed
+			? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2Z" /></svg>`
+			: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 2h9a2 2 0 0 1 2 2v1H2V6a2 2 0 0 1 2-2Z" /><path d="M2 9h20l-1.5 9a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2L2 9Z" /></svg>`;
 		const label = document.createElement("span");
 		label.className = "project-name";
 		label.textContent = basename(cwd);
+		const newChatButton = document.createElement("button");
+		newChatButton.type = "button";
+		newChatButton.className = "project-new-chat-btn";
+		newChatButton.title = "New chat in this project";
+		newChatButton.setAttribute("aria-label", newChatButton.title);
+		newChatButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
+		newChatButton.addEventListener("click", async (event) => {
+			event.stopPropagation();
+			try {
+				if (state?.cwd !== cwd) renderState(await window.piDesktop.setCwd(cwd));
+				renderState(await window.piDesktop.newSession());
+				await refreshAfterSessionChange();
+			} catch (error) {
+				showError(error);
+			} finally {
+				promptInput.focus();
+			}
+		});
+		const collapseIcon = document.createElement("span");
+		collapseIcon.className = "project-collapse-icon";
+		collapseIcon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
 		heading.title = `${cwd} · ${projectSessions.length} sessions`;
-		heading.append(icon, label);
+		heading.append(icon, label, newChatButton, collapseIcon);
+		heading.addEventListener("click", () => {
+			if (collapsedProjects.has(cwd)) {
+				collapsedProjects.delete(cwd);
+			} else {
+				collapsedProjects.add(cwd);
+			}
+			localStorage.setItem("pi-collapsed-projects", JSON.stringify([...collapsedProjects]));
+			renderSessionList();
+		});
 		sessionList.append(heading);
+		if (projectCollapsed) continue;
 
 		const activeIndex = projectSessions.findIndex((session) => isActiveSession(session));
 		const defaultLimit = activeIndex >= projectSessionPageSize ? activeIndex + 1 : projectSessionPageSize;
@@ -1760,30 +1841,36 @@ function renderSessionList(): void {
 			sessionList.append(controls);
 		}
 	}
-	if (archivedCount > 0) {
+	if (archivedSessions.length > 0) {
 		const archivedToggle = document.createElement("button");
 		archivedToggle.type = "button";
 		archivedToggle.className = "archived-sessions-toggle";
-		archivedToggle.textContent = showArchivedSessions ? "Hide archived chats" : `Show ${archivedCount} archived`;
+		archivedToggle.setAttribute("aria-expanded", String(showArchivedSessions));
+		archivedToggle.textContent = `Archived · ${archivedSessions.length}`;
 		archivedToggle.addEventListener("click", () => {
 			showArchivedSessions = !showArchivedSessions;
 			renderSessionList();
 		});
 		sessionList.append(archivedToggle);
+		if (showArchivedSessions) {
+			for (const session of archivedSessions) sessionList.append(createSessionListItem(session, { archived: true }));
+		}
 	}
 	syncSessionMenu();
 }
 
-function createSessionListItem(session: DesktopSessionInfo): HTMLElement {
+function createSessionListItem(session: DesktopSessionInfo, options: { archived?: boolean } = {}): HTMLElement {
+	const archived = options.archived === true;
 	const row = document.createElement("div");
 	row.className = `session-item-row ${isActiveSession(session) ? "active" : ""} ${
 		session.path === switchingSessionPath ? "loading" : ""
-	} ${isSessionPinned(session) ? "pinned" : ""} ${isSessionArchived(session) ? "archived" : ""}`;
+	} ${isSessionPinned(session) ? "pinned" : ""} ${archived ? "archived" : ""}`;
 	const button = document.createElement("button");
 	button.type = "button";
 	button.disabled = session.path === switchingSessionPath;
 	button.className = "session-item";
 	const title = sessionDisplayTitle(session);
+	button.title = `${session.name || session.firstMessage || "Untitled session"} · ${basename(session.cwd)}`;
 	const titleEl = document.createElement("span");
 	titleEl.className = "session-item-title";
 	const titleText = document.createElement("span");
@@ -1814,13 +1901,29 @@ function createSessionListItem(session: DesktopSessionInfo): HTMLElement {
 
 	const actions = document.createElement("div");
 	actions.className = "session-item-actions";
+	if (archived) {
+		const restoreButton = document.createElement("button");
+		restoreButton.type = "button";
+		restoreButton.className = "session-row-action";
+		restoreButton.title = "Restore chat";
+		restoreButton.setAttribute("aria-label", restoreButton.title);
+		restoreButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v13H4z"/><path d="M3 3h18v4H3zM9 12h6"/></svg>`;
+		restoreButton.addEventListener("click", (event) => {
+			event.stopPropagation();
+			setSessionArchived(session, false);
+			renderSessionList();
+		});
+		actions.append(restoreButton);
+		row.append(button, actions);
+		return row;
+	}
 	const pinButton = document.createElement("button");
 	pinButton.type = "button";
 	pinButton.className = "session-row-action session-pin-button";
 	pinButton.title = isSessionPinned(session) ? "Unpin chat" : "Pin chat";
 	pinButton.setAttribute("aria-label", pinButton.title);
 	pinButton.setAttribute("aria-pressed", isSessionPinned(session) ? "true" : "false");
-	pinButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 4 6 6-4 1-4 7-2-2 7-4 1-4-6-6Z" /><path d="m4 20 6-6" /></svg>`;
+	pinButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3 6 0 1 6 3 3v2H5v-2l3-3 1-6Z"/><path d="M12 14v7"/></svg>`;
 	pinButton.addEventListener("click", (event) => {
 		event.stopPropagation();
 		setSessionPinned(session, !isSessionPinned(session));
@@ -1828,18 +1931,13 @@ function createSessionListItem(session: DesktopSessionInfo): HTMLElement {
 	const archiveButton = document.createElement("button");
 	archiveButton.type = "button";
 	archiveButton.className = "session-row-action";
-	archiveButton.title = isSessionArchived(session) ? "Unarchive chat" : "Archive chat";
+	archiveButton.title = "Archive chat";
 	archiveButton.setAttribute("aria-label", archiveButton.title);
-	archiveButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg>`;
+	archiveButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v13H4z"/><path d="M3 3h18v4H3zM9 12h6"/></svg>`;
 	archiveButton.addEventListener("click", async (event) => {
 		event.stopPropagation();
 		try {
-			if (isSessionArchived(session)) {
-				setSessionArchived(session, false);
-				renderSessionList();
-			} else {
-				await archiveSession(session);
-			}
+			await archiveSession(session);
 		} catch (error) {
 			showError(error);
 		}
@@ -2011,14 +2109,19 @@ function showSessionRenameForm(): void {
 }
 
 function nextSessionInProjectAfterArchive(session: DesktopSessionInfo): DesktopSessionInfo | undefined {
-	return sessions
-		.filter(
-			(candidate) => candidate.cwd === session.cwd && !isActiveSession(candidate) && !isSessionArchived(candidate),
-		)
-		.sort(
-			(a, b) =>
-				Number(isSessionPinned(b)) - Number(isSessionPinned(a)) || modifiedSessionTime(b) - modifiedSessionTime(a),
-		)[0];
+	const projectSessions = sessions
+		.filter((candidate) => candidate.cwd === session.cwd && !isSessionArchived(candidate))
+		.sort((a, b) => modifiedSessionTime(b) - modifiedSessionTime(a));
+	const currentIndex = projectSessions.findIndex(
+		(candidate) => candidate.id === session.id || candidate.path === session.path,
+	);
+	return (
+		projectSessions.slice(Math.max(0, currentIndex + 1)).find((candidate) => !isActiveSession(candidate)) ??
+		projectSessions
+			.slice(0, Math.max(0, currentIndex))
+			.reverse()
+			.find((candidate) => !isActiveSession(candidate))
+	);
 }
 
 async function archiveSession(session: DesktopSessionInfo): Promise<void> {
@@ -2590,18 +2693,70 @@ function mountTerminal(host: HTMLElement): void {
 	}, 0);
 }
 
-function openBrowserUrl(value: string, input: HTMLInputElement, frame: HTMLElement): void {
-	const trimmed = value.trim();
-	if (!trimmed) return;
+function isBlankBrowserUrl(value: unknown): boolean {
+	const trimmed = String(value ?? "").trim();
+	return !trimmed || trimmed === "about:blank";
+}
+
+function browserTargetUrl(input: HTMLInputElement): string {
+	return isBlankBrowserUrl(input.value) ? browserHomeUrl : input.value;
+}
+
+function openBrowserUrl(
+	value: string,
+	input: HTMLInputElement,
+	frame: HTMLElement,
+	options: { forceReload?: boolean } = {},
+): void {
+	const trimmed = isBlankBrowserUrl(value) ? browserHomeUrl : value.trim();
 	const url = new URL(isBrowserUrl(trimmed) ? trimmed : `https://${trimmed}`);
 	input.value = url.href;
+	if (options.forceReload && frame.getAttribute("src") === url.href) {
+		frame.setAttribute("src", "about:blank");
+		requestAnimationFrame(() => frame.setAttribute("src", url.href));
+		return;
+	}
 	frame.setAttribute("src", url.href);
 }
 
-function ensureBrowserLoaded(input: HTMLInputElement, frame: HTMLElement): void {
-	if (frame.getAttribute("src") === "about:blank") {
-		openBrowserUrl(input.value, input, frame);
+function browserFrameUrl(frame: HTMLElement): string | null {
+	try {
+		const candidate = frame as HTMLElement & { getURL?: () => string };
+		return typeof candidate.getURL === "function" ? candidate.getURL() : frame.getAttribute("src");
+	} catch {
+		return frame.getAttribute("src");
 	}
+}
+
+function ensureBrowserLoaded(input: HTMLInputElement, frame: HTMLElement): void {
+	const src = frame.getAttribute("src");
+	const currentUrl = browserFrameUrl(frame);
+	if (isBlankBrowserUrl(src) || isBlankBrowserUrl(currentUrl)) {
+		openBrowserUrl(browserTargetUrl(input), input, frame, { forceReload: true });
+	}
+}
+
+function setupBrowserFrame(input: HTMLInputElement, frame: HTMLElement): void {
+	const syncInputUrl = (url: unknown): void => {
+		if (!isBlankBrowserUrl(url)) input.value = String(url);
+	};
+	frame.addEventListener("did-navigate", (event) => {
+		syncInputUrl((event as Event & { url?: string }).url);
+	});
+	frame.addEventListener("did-navigate-in-page", (event) => {
+		syncInputUrl((event as Event & { url?: string }).url);
+	});
+	frame.addEventListener("did-fail-load", (event) => {
+		const failure = event as Event & { errorCode?: number; isMainFrame?: boolean };
+		if (failure.errorCode === -3 || failure.isMainFrame === false) return;
+		setTimeout(() => openBrowserUrl(browserTargetUrl(input), input, frame, { forceReload: true }), 250);
+	});
+	frame.addEventListener("render-process-gone", () => {
+		setTimeout(() => openBrowserUrl(browserTargetUrl(input), input, frame, { forceReload: true }), 250);
+	});
+	frame.addEventListener("did-stop-loading", () => {
+		setTimeout(() => ensureBrowserLoaded(input, frame), 250);
+	});
 }
 
 function openUrlInRightBrowser(url: string): void {
@@ -2680,6 +2835,14 @@ terminalCloseButton.addEventListener("click", () => {
 	syncRightPanelContent();
 });
 
+browserHomeButton.addEventListener("click", () => {
+	try {
+		openBrowserUrl(browserHomeUrl, browserUrlInput, browserFrame);
+	} catch (error) {
+		showError(error);
+	}
+});
+
 browserGoButton.addEventListener("click", () => {
 	try {
 		openBrowserUrl(browserUrlInput.value, browserUrlInput, browserFrame);
@@ -2693,6 +2856,14 @@ browserUrlInput.addEventListener("keydown", (event) => {
 	event.preventDefault();
 	try {
 		openBrowserUrl(browserUrlInput.value, browserUrlInput, browserFrame);
+	} catch (error) {
+		showError(error);
+	}
+});
+
+bottomBrowserHomeButton.addEventListener("click", () => {
+	try {
+		openBrowserUrl(browserHomeUrl, bottomBrowserUrlInput, bottomBrowserFrame);
 	} catch (error) {
 		showError(error);
 	}
@@ -2715,6 +2886,9 @@ bottomBrowserUrlInput.addEventListener("keydown", (event) => {
 		showError(error);
 	}
 });
+
+setupBrowserFrame(browserUrlInput, browserFrame);
+setupBrowserFrame(bottomBrowserUrlInput, bottomBrowserFrame);
 
 // Bottom panel resize
 bottomResizer.addEventListener("pointerdown", (event) => {
@@ -2933,6 +3107,26 @@ refreshGitButton.addEventListener("click", () => {
 
 refreshSessionsButton.addEventListener("click", () => {
 	refreshSessions().catch(showError);
+});
+
+sessionSearchInput.addEventListener("input", () => {
+	renderSessionList();
+});
+
+addProjectButton.addEventListener("click", async () => {
+	try {
+		const selections = await window.piDesktop.chooseContext("folder");
+		const folder = selections.find((selection): selection is Extract<DesktopContextSelection, { type: "path" }> => {
+			return selection.type === "path";
+		});
+		if (!folder) return;
+		renderState(await window.piDesktop.setCwd(folder.path));
+		renderState(await window.piDesktop.newSession());
+		await refreshAfterSessionChange();
+		promptInput.focus();
+	} catch (error) {
+		showError(error);
+	}
 });
 
 settingsLogoutButton.addEventListener("click", async () => {
