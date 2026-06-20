@@ -79,6 +79,37 @@ type GitStatus = {
 	error?: string;
 };
 
+type DiffLine = {
+	newLine?: number;
+	oldLine?: number;
+	text: string;
+	type: "context" | "add" | "delete";
+};
+
+type DiffHunk = {
+	header: string;
+	lines: DiffLine[];
+	newLines: number;
+	newStart: number;
+	oldLines: number;
+	oldStart: number;
+};
+
+type DiffFile = {
+	additions: number;
+	deletions: number;
+	hunks: DiffHunk[];
+	newPath: string;
+	oldPath: string;
+	status: "modified" | "added" | "deleted" | "renamed";
+};
+
+type ParsedDiff = {
+	files: DiffFile[];
+	totalAdditions: number;
+	totalDeletions: number;
+};
+
 type DesktopLogoutResult = {
 	state: DesktopState;
 	message: string;
@@ -142,6 +173,7 @@ type PiDesktopApi = {
 	logout(): Promise<DesktopLogoutResult>;
 	quit(): Promise<void>;
 	gitStatus(): Promise<GitStatus>;
+	getDiff(scope?: "working-tree" | "staged" | "last-turn", context?: number): Promise<ParsedDiff>;
 	terminalCreate(): Promise<void>;
 	terminalWrite(data: string): void;
 	terminalResize(cols: number, rows: number): void;

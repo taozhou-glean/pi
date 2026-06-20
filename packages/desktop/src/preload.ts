@@ -28,6 +28,8 @@ const api = {
 	logout: () => ipcRenderer.invoke("pi:logout"),
 	quit: () => ipcRenderer.invoke("pi:quit"),
 	gitStatus: () => ipcRenderer.invoke("pi:git-status"),
+	getDiff: (scope?: "working-tree" | "staged" | "last-turn", context?: number) =>
+		ipcRenderer.invoke("pi:get-diff", scope, context),
 	terminalCreate: () => ipcRenderer.invoke("pi:terminal-create"),
 	terminalWrite: (data: string) => ipcRenderer.send("pi:terminal-write", data),
 	terminalResize: (cols: number, rows: number) => ipcRenderer.send("pi:terminal-resize", cols, rows),

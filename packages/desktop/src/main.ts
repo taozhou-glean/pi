@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions, shell } from "electron";
 import * as pty from "node-pty";
+import { type ParsedDiff, parseUnifiedDiff } from "./diff-parser";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -97,6 +98,8 @@ type DesktopCurrentUser = {
 	photoUrl?: string;
 	endpoint?: string;
 };
+
+type DesktopDiffScope = "working-tree" | "staged" | "last-turn";
 
 type DesktopGleanAuth = {
 	endpoint: string;
@@ -685,6 +688,60 @@ async function getGitStatus(): Promise<{
 			status: [],
 			error: error instanceof Error ? error.message : String(error),
 		};
+	}
+}
+
+async function getUntrackedPaths(cwd: string): Promise<string[]> {
+	const { stdout } = await execFileAsync("git", ["ls-files", "--others", "--exclude-standard"], {
+		cwd,
+		timeout: 10_000,
+	});
+	return stdout
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+}
+
+async function getUntrackedDiff(cwd: string, context: number, paths: string[]): Promise<string> {
+	const chunks: string[] = [];
+	for (const filePath of paths) {
+		try {
+			const { stdout } = await execFileAsync(
+				"git",
+				["diff", "--no-index", `--unified=${context}`, "--", "/dev/null", filePath],
+				{
+					cwd,
+					maxBuffer: 10 * 1024 * 1024,
+				},
+			);
+			chunks.push(stdout);
+		} catch (error) {
+			const stdout = typeof error === "object" && error && "stdout" in error ? String(error.stdout) : "";
+			if (stdout) chunks.push(stdout);
+		}
+	}
+	return chunks.join("\n");
+}
+
+async function getDesktopDiff(scope: DesktopDiffScope = "working-tree", context = 3): Promise<ParsedDiff> {
+	await ensureDesktopSession();
+	const unifiedContext = Number.isFinite(context) ? Math.max(0, Math.min(20, Math.trunc(context))) : 3;
+	const unified = `--unified=${unifiedContext}`;
+	const args = scope === "staged" ? ["diff", "--cached", unified] : ["diff", unified];
+	try {
+		const [{ stdout: trackedDiff }, untrackedPaths] = await Promise.all([
+			execFileAsync("git", args, {
+				cwd: currentCwd,
+				maxBuffer: 10 * 1024 * 1024,
+				timeout: 15_000,
+			}),
+			scope === "staged" ? Promise.resolve<string[]>([]) : getUntrackedPaths(currentCwd),
+		]);
+		const untrackedDiff = await getUntrackedDiff(currentCwd, unifiedContext, untrackedPaths);
+		return parseUnifiedDiff([trackedDiff, untrackedDiff].filter(Boolean).join("\n"));
+	} catch (error) {
+		console.error("[desktop] getDiff failed:", error instanceof Error ? error.message : error);
+		return { files: [], totalAdditions: 0, totalDeletions: 0 };
 	}
 }
 
@@ -1742,6 +1799,9 @@ ipcMain.handle("pi:git-status", async () => {
 	await ensureDesktopSession();
 	return getGitStatus();
 });
+ipcMain.handle("pi:get-diff", async (_event, scope?: DesktopDiffScope, context?: number) =>
+	getDesktopDiff(scope, context),
+);
 
 // Terminal (PTY) management
 let ptyProcess: pty.IPty | undefined;
