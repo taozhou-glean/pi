@@ -1478,11 +1478,13 @@ select:focus {
 
 .session-item {
 	position: relative;
-	display: flex;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) max-content 56px;
 	align-items: center;
+	column-gap: 10px;
 	width: 100%;
 	min-height: 28px;
-	padding: 3px 72px 3px 32px;
+	padding: 3px 8px 3px 32px;
 	text-align: left;
 	background: transparent;
 	color: var(--nav-text);
@@ -1501,7 +1503,7 @@ select:focus {
 
 .session-item-row:hover .session-item,
 .session-item-row.pinned .session-item {
-	padding-right: 122px;
+	grid-template-columns: minmax(0, 1fr) max-content 108px;
 }
 
 .session-pagination {
@@ -1533,6 +1535,7 @@ select:focus {
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
+	max-width: 100%;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -1584,6 +1587,7 @@ select:focus {
 	font-size: 11px;
 	white-space: nowrap;
 	flex-shrink: 0;
+	justify-self: end;
 }
 
 .session-item .session-item-messages {
@@ -1601,7 +1605,7 @@ select:focus {
 .session-item-actions {
 	position: absolute;
 	top: 50%;
-	right: 66px;
+	right: 8px;
 	display: flex;
 	opacity: 0;
 	pointer-events: none;
