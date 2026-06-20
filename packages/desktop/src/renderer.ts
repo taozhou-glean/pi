@@ -392,7 +392,7 @@ const rightPanelTabs = Array.from(document.querySelectorAll<HTMLButtonElement>("
 const rightPanelPanes = Array.from(document.querySelectorAll<HTMLElement>("[data-right-panel-pane]"));
 const bottomPanelTabs = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-bottom-panel-tab]"));
 const bottomPanelPanes = Array.from(document.querySelectorAll<HTMLElement>("[data-bottom-panel-pane]"));
-const browserHomeUrl = "https://app.glean.com";
+const browserHomeUrl = "https://google.com";
 const browserHomeButton = document.querySelector<HTMLButtonElement>("#browser-home")!;
 const browserUrlInput = document.querySelector<HTMLInputElement>("#browser-url")!;
 const browserGoButton = document.querySelector<HTMLButtonElement>("#browser-go")!;
@@ -413,9 +413,8 @@ const sessionSearchInput = document.querySelector<HTMLInputElement>("#session-se
 const modelSelect = document.querySelector<HTMLSelectElement>("#model-select")!;
 const modelMeta = document.querySelector<HTMLDivElement>("#model-meta")!;
 const themeSelect = document.querySelector<HTMLSelectElement>("#theme-select")!;
-const gitBranch = document.querySelector<HTMLDivElement>("#git-branch")!;
-const gitStatus = document.querySelector<HTMLDivElement>("#git-status")!;
-const refreshGitButton = document.querySelector<HTMLButtonElement>("#refresh-git")!;
+const gitBranch = document.querySelector<HTMLDivElement>("#git-branch");
+const gitStatus = document.querySelector<HTMLDivElement>("#git-status");
 const toggleEnvironmentCardButton = document.querySelector<HTMLButtonElement>("#toggle-environment-card")!;
 const refreshEnvironmentButton = document.querySelector<HTMLButtonElement>("#refresh-environment")!;
 const environmentPopover = document.querySelector<HTMLElement>("#environment-popover")!;
@@ -466,7 +465,7 @@ const workspaceName = document.querySelector<HTMLElement>("#workspace-name")!;
 const sessionShortId = document.querySelector<HTMLElement>("#session-short-id")!;
 const messageCount = document.querySelector<HTMLElement>("#message-count")!;
 const queueCount = document.querySelector<HTMLElement>("#queue-count")!;
-const contextSummary = document.querySelector<HTMLDivElement>("#context-summary")!;
+const contextSummary = document.querySelector<HTMLDivElement>("#context-summary");
 const messagesEl = document.querySelector<HTMLElement>("#messages")!;
 const loginScreen = document.querySelector<HTMLElement>("#login-screen")!;
 const loginButton = document.querySelector<HTMLButtonElement>("#login-button")!;
@@ -574,7 +573,7 @@ const autoExpandLeftWidth = 1140;
 type ThemePreference = "system" | "light" | "dark";
 
 type WindowPanelTab = "terminal" | "browser";
-type RightPanelTab = "inspector" | "review" | WindowPanelTab;
+type RightPanelTab = "review" | WindowPanelTab;
 
 type LayoutState = {
 	leftWidth: number;
@@ -613,7 +612,7 @@ function isWindowPanelTab(value: unknown): value is WindowPanelTab {
 }
 
 function isRightPanelTab(value: unknown): value is RightPanelTab {
-	return value === "inspector" || value === "review" || isWindowPanelTab(value);
+	return value === "review" || isWindowPanelTab(value);
 }
 
 function projectLayoutStorageKey(cwd: string): string {
@@ -632,7 +631,7 @@ function loadLayoutState(storageKey = layoutStorageKey): LayoutState {
 			rightCollapsed: parsed.rightCollapsed === undefined ? true : parsed.rightCollapsed === true,
 			bottomHeight: clamp(Number(parsed.bottomHeight) || 240, 120, 600),
 			bottomCollapsed: parsed.bottomCollapsed !== false,
-			rightTab: isRightPanelTab(parsed.rightTab) ? parsed.rightTab : "inspector",
+			rightTab: isRightPanelTab(parsed.rightTab) ? parsed.rightTab : "terminal",
 			bottomTab: isWindowPanelTab(parsed.bottomTab) ? parsed.bottomTab : "terminal",
 		};
 	} catch {
@@ -643,7 +642,7 @@ function loadLayoutState(storageKey = layoutStorageKey): LayoutState {
 			rightCollapsed: true,
 			bottomHeight: 240,
 			bottomCollapsed: true,
-			rightTab: "inspector",
+			rightTab: "terminal",
 			bottomTab: "terminal",
 		};
 	}
@@ -2878,12 +2877,14 @@ function renderState(next: DesktopState): void {
 	renderPermissionRequests();
 	renderClarificationRequests();
 	renderQueuedPrompts();
-	contextSummary.innerHTML = `
+	if (contextSummary) {
+		contextSummary.innerHTML = `
 		<div><span>Working directory</span><strong>${next.cwd}</strong></div>
 		<div><span>Session store</span><strong>${next.sessionDir ?? "Default Pi session store"}</strong></div>
 		<div><span>Session file</span><strong>${next.sessionFile ?? "Not written yet"}</strong></div>
 		<div><span>Model</span><strong>${requiresAuth ? "Login required" : model}</strong></div>
 	`;
+	}
 	setBusy(isRunActive(next));
 	renderContextUsage(next);
 	renderComposerContext();
@@ -3475,6 +3476,7 @@ function createSessionListItem(session: DesktopSessionInfo, options: { archived?
 
 function renderGit(status: GitStatus): void {
 	renderComposerContext(status);
+	if (!gitBranch || !gitStatus) return;
 	if (!status.isRepo) {
 		gitBranch.textContent = "Not a git repository";
 		gitStatus.textContent = status.error || "";
@@ -5878,16 +5880,14 @@ rightResizer.addEventListener("keydown", (event) => {
 	handleResizeKey("right", event);
 });
 
-refreshGitButton.addEventListener("click", () => {
-	refreshGit().catch(showError);
-});
-
 refreshEnvironmentButton.addEventListener("click", () => {
 	refreshEnvironment().catch(showError);
 });
 
 refreshReviewButton.addEventListener("click", () => {
+	refreshGit().catch(showError);
 	refreshReview().catch(showError);
+	refreshEnvironment().catch(showError);
 });
 
 reviewScopeSelect.addEventListener("change", () => {
