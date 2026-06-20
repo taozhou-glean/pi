@@ -27,8 +27,9 @@ type DesktopState = {
 
 type DesktopQueuedPrompt = {
 	id: string;
-	type: "steer" | "followUp";
 	text: string;
+	imageCount: number;
+	createdAt: number;
 };
 
 type DesktopTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
@@ -198,6 +199,14 @@ type PiDesktopApi = {
 	steerPrompt(
 		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
 	): Promise<DesktopState>;
+	takeQueuedPrompt(id: string): Promise<{
+		state: DesktopState;
+		prompt?: {
+			text: string;
+			images?: Array<{ type: "image"; data: string; mimeType: string }>;
+		};
+	}>;
+	steerQueuedPrompt(id: string): Promise<DesktopState>;
 	abort(): Promise<DesktopState>;
 	chooseContext(kind: "files" | "folder" | "workspace"): Promise<DesktopContextSelection[]>;
 	setCwd(cwd: string): Promise<DesktopState>;
@@ -2802,7 +2811,35 @@ function markDraftCommentsSubmitted(): void {
 
 function queuedPromptPreview(prompt: DesktopQueuedPrompt): string {
 	const text = prompt.text.trim();
-	return text || "Queued message";
+	const imageText = prompt.imageCount > 0 ? `${prompt.imageCount} image${prompt.imageCount === 1 ? "" : "s"}` : "";
+	if (text && imageText) return `${text} · ${imageText}`;
+	return text || imageText || "Queued message";
+}
+
+function restoreQueuedPrompt(
+	prompt: { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> } | undefined,
+): void {
+	if (!prompt) return;
+	if (
+		(promptInput.value.trim() || composerImages.length > 0 || composerFiles.length > 0) &&
+		!confirm("Replace current draft?")
+	) {
+		return;
+	}
+	clearComposerAttachments();
+	promptInput.value = prompt.text ?? "";
+	composerImages = (prompt.images ?? []).map((image) => ({
+		id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		data: image.data,
+		mimeType: image.mimeType,
+		name: "Queued image",
+		objectUrl: `data:${image.mimeType};base64,${image.data}`,
+	}));
+	renderComposerAttachments();
+	autosizePrompt();
+	syncSendButtonState();
+	promptInput.focus();
+	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
 }
 
 function renderQueuedPrompts(): void {
@@ -2816,12 +2853,39 @@ function renderQueuedPrompts(): void {
 		meta.className = "queued-prompt-meta";
 		const label = document.createElement("span");
 		label.className = "queued-prompt-label";
-		label.textContent = prompt.type === "steer" ? "Queued steer" : "Queued next";
+		label.textContent = "Queued next";
 		const preview = document.createElement("span");
 		preview.className = "queued-prompt-preview";
 		preview.textContent = queuedPromptPreview(prompt);
 		meta.append(label, preview);
-		item.append(meta);
+		const actions = document.createElement("div");
+		actions.className = "queued-prompt-actions";
+		const steer = document.createElement("button");
+		steer.type = "button";
+		steer.textContent = "Steer";
+		steer.title = "Send this into the current run after the active tool finishes";
+		steer.addEventListener("click", async () => {
+			try {
+				renderState(await window.piDesktop.steerQueuedPrompt(prompt.id));
+				showStreamingIndicator();
+			} catch (error) {
+				showError(error);
+			}
+		});
+		const edit = document.createElement("button");
+		edit.type = "button";
+		edit.textContent = "Edit";
+		edit.addEventListener("click", async () => {
+			try {
+				const result = await window.piDesktop.takeQueuedPrompt(prompt.id);
+				renderState(result.state);
+				restoreQueuedPrompt(result.prompt);
+			} catch (error) {
+				showError(error);
+			}
+		});
+		actions.append(steer, edit);
+		item.append(meta, actions);
 		queuedPromptList.append(item);
 	}
 }

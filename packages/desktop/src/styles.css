@@ -3056,7 +3056,7 @@ body.resizing-panels {
 
 .queued-prompt {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: center;
 	gap: 10px;
 	padding: 8px 10px;
@@ -3084,6 +3084,26 @@ body.resizing-panels {
 	font-size: 13px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.queued-prompt-actions {
+	display: flex;
+	gap: 6px;
+}
+
+.queued-prompt-actions button {
+	min-height: 26px;
+	padding: 0 8px;
+	border-color: var(--line-strong);
+	background: var(--panel);
+	color: var(--secondary-ink);
+	font-size: 12px;
+	box-shadow: none;
+}
+
+.queued-prompt-actions button:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+	color: var(--ink);
 }
 
 .review-comments-badge {

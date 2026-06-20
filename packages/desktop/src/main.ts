@@ -54,6 +54,18 @@ type DesktopPromptPayload = {
 	images?: DesktopPromptImage[];
 };
 
+type DesktopQueuedPrompt = DesktopPromptPayload & {
+	id: string;
+	createdAt: number;
+};
+
+type DesktopQueuedPromptSummary = {
+	id: string;
+	text: string;
+	imageCount: number;
+	createdAt: number;
+};
+
 type DesktopContextSelection =
 	| { type: "path"; path: string; name: string }
 	| { type: "image"; path: string; name: string; data: string; mimeType: string };
@@ -84,15 +96,9 @@ type DesktopState = {
 	availableModelCount: number;
 	isStreaming: boolean;
 	pendingMessageCount: number;
-	queuedPrompts: DesktopQueuedPrompt[];
+	queuedPrompts: DesktopQueuedPromptSummary[];
 	messageCount: number;
 	todos: DesktopTodo[];
-};
-
-type DesktopQueuedPrompt = {
-	id: string;
-	type: "steer" | "followUp";
-	text: string;
 };
 
 type DesktopTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
@@ -152,10 +158,13 @@ let currentSessionDir: string | undefined;
 const providerAllowlist = ["glean"];
 const envSessionDir = "PI_CODING_AGENT_SESSION_DIR";
 const responseFeedbackEntryType = "cowork_response_feedback";
+const queuedPromptEntryType = "cowork_queued_prompt";
 const turnDiffEntryType = "cowork_turn_diff";
 const desktopTodoStateEntryType = "cowork_todo_state";
 const turnSnapshotsBySessionId = new Map<string, DesktopTurnSnapshot>();
 const todosBySessionId = new Map<string, DesktopTodo[]>();
+const queuedPromptsBySessionKey = new Map<string, DesktopQueuedPrompt[]>();
+const queuedPromptDrains = new Set<string>();
 let isQuitting = false;
 let pendingSessionSnapshot: NodeJS.Timeout | undefined;
 
@@ -365,6 +374,100 @@ function replayResponseFeedback(
 		}
 	}
 	return feedback;
+}
+
+function sessionQueueKey(session: AgentSession): string {
+	return session.sessionFile ? resolve(session.sessionFile) : session.sessionId;
+}
+
+function isDesktopPromptImage(value: unknown): value is DesktopPromptImage {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const image = value as Partial<DesktopPromptImage>;
+	return image.type === "image" && typeof image.data === "string" && typeof image.mimeType === "string";
+}
+
+function isDesktopQueuedPrompt(value: unknown): value is DesktopQueuedPrompt {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const prompt = value as Partial<DesktopQueuedPrompt>;
+	return (
+		typeof prompt.id === "string" &&
+		typeof prompt.text === "string" &&
+		typeof prompt.createdAt === "number" &&
+		(prompt.images === undefined || (Array.isArray(prompt.images) && prompt.images.every(isDesktopPromptImage)))
+	);
+}
+
+function replayQueuedPrompts(entries: ReturnType<SessionManager["getBranch"]>): DesktopQueuedPrompt[] {
+	const prompts: DesktopQueuedPrompt[] = [];
+	for (const entry of entries) {
+		if (entry.type !== "custom" || entry.customType !== queuedPromptEntryType) continue;
+		const data = entry.data as { action?: unknown; prompt?: unknown; id?: unknown } | undefined;
+		if (data?.action === "enqueue" && isDesktopQueuedPrompt(data.prompt)) {
+			prompts.push(data.prompt);
+		} else if (data?.action === "remove" && typeof data.id === "string") {
+			const index = prompts.findIndex((prompt) => prompt.id === data.id);
+			if (index !== -1) prompts.splice(index, 1);
+		}
+	}
+	return prompts;
+}
+
+function hydrateQueuedPrompts(session: AgentSession): void {
+	const key = sessionQueueKey(session);
+	const prompts = replayQueuedPrompts(session.sessionManager.getBranch());
+	if (prompts.length > 0) {
+		queuedPromptsBySessionKey.set(key, prompts);
+	} else {
+		queuedPromptsBySessionKey.delete(key);
+	}
+}
+
+function getQueuedPrompts(session = getSession()): DesktopQueuedPrompt[] {
+	return queuedPromptsBySessionKey.get(sessionQueueKey(session)) ?? [];
+}
+
+function summarizeQueuedPrompts(session = getSession()): DesktopQueuedPromptSummary[] {
+	return getQueuedPrompts(session).map((prompt) => ({
+		id: prompt.id,
+		text: prompt.text,
+		imageCount: prompt.images?.length ?? 0,
+		createdAt: prompt.createdAt,
+	}));
+}
+
+function persistQueuedPromptEntry(
+	entry: { action: "enqueue"; prompt: DesktopQueuedPrompt } | { action: "remove"; id: string },
+): void {
+	getSession().sessionManager.appendCustomEntry(queuedPromptEntryType, entry);
+}
+
+function queuePrompt(prompt: DesktopPromptPayload): DesktopQueuedPrompt {
+	const session = getSession();
+	const queuedPrompt: DesktopQueuedPrompt = {
+		...prompt,
+		id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		createdAt: Date.now(),
+	};
+	queuedPromptsBySessionKey.set(sessionQueueKey(session), [...getQueuedPrompts(session), queuedPrompt]);
+	persistQueuedPromptEntry({ action: "enqueue", prompt: queuedPrompt });
+	publishState();
+	return queuedPrompt;
+}
+
+function removeQueuedPrompt(id: string): DesktopQueuedPrompt | undefined {
+	const session = getSession();
+	const queuedPrompts = getQueuedPrompts(session);
+	const queuedPrompt = queuedPrompts.find((prompt) => prompt.id === id);
+	if (!queuedPrompt) return undefined;
+	const nextQueuedPrompts = queuedPrompts.filter((prompt) => prompt.id !== id);
+	if (nextQueuedPrompts.length > 0) {
+		queuedPromptsBySessionKey.set(sessionQueueKey(session), nextQueuedPrompts);
+	} else {
+		queuedPromptsBySessionKey.delete(sessionQueueKey(session));
+	}
+	persistQueuedPromptEntry({ action: "remove", id });
+	publishState();
+	return queuedPrompt;
 }
 
 function isParsedDiff(value: unknown): value is ParsedDiff {
@@ -644,17 +747,8 @@ function serializeState(): DesktopState {
 		authRequired: availableModelCount === 0,
 		availableModelCount,
 		isStreaming: session.isStreaming,
-		pendingMessageCount: session.pendingMessageCount,
-		queuedPrompts: [
-			...session
-				.getSteeringMessages()
-				.map((text, index) => ({ id: `steer:${index}`, type: "steer" as const, text })),
-			...session.getFollowUpMessages().map((text, index) => ({
-				id: `followUp:${index}`,
-				type: "followUp" as const,
-				text,
-			})),
-		],
+		pendingMessageCount: session.pendingMessageCount + getQueuedPrompts(session).length,
+		queuedPrompts: summarizeQueuedPrompts(session),
 		messageCount: session.messages.length,
 		todos: todosBySessionId.get(session.sessionId) ?? [],
 	};
@@ -708,6 +802,12 @@ function handleSessionEvent(event: AgentSessionEvent): void {
 	send("pi:event", event);
 	if (event.type === "agent_end" && !event.willRetry) {
 		captureLastTurnDiff().catch(() => {});
+		setTimeout(() => {
+			startNextQueuedPrompt().catch((error) => {
+				const message = error instanceof Error ? error.message : String(error);
+				send("pi:event", { type: "desktop_error", message });
+			});
+		}, 0);
 	}
 	if (event.type === "message_update" || event.type === "tool_execution_update") {
 		scheduleSessionSnapshot();
@@ -781,6 +881,7 @@ async function createDesktopSessionInner(
 		sessionManager,
 		sessionStartEvent: { type: "session_start", reason: "startup" },
 	});
+	hydrateQueuedPrompts(current.session);
 	hydrateLastTurnDiff(current.session);
 	hydrateDesktopTodos(current.session);
 	unsubscribeSession = current.session.subscribe(handleSessionEvent);
@@ -969,6 +1070,28 @@ async function captureLastTurnDiff(): Promise<void> {
 	snapshot.baseRef = undefined;
 	session.sessionManager.appendCustomEntry(turnDiffEntryType, snapshot.diff);
 	publishState();
+}
+
+async function submitPrompt(prompt: DesktopPromptPayload): Promise<void> {
+	await captureLastTurnBase();
+	await getSession().prompt(prompt.text, { images: prompt.images });
+}
+
+async function startNextQueuedPrompt(): Promise<void> {
+	await ensureDesktopSession();
+	const session = getSession();
+	const key = sessionQueueKey(session);
+	if (queuedPromptDrains.has(key)) return;
+	if (session.isStreaming || session.pendingMessageCount > 0) return;
+	const queuedPrompt = getQueuedPrompts(session)[0];
+	if (!queuedPrompt) return;
+	queuedPromptDrains.add(key);
+	try {
+		await submitPrompt(queuedPrompt);
+		removeQueuedPrompt(queuedPrompt.id);
+	} finally {
+		queuedPromptDrains.delete(key);
+	}
 }
 
 async function createWindow(): Promise<void> {
@@ -1891,11 +2014,11 @@ ipcMain.handle("pi:set-response-feedback", async (_event, entryId: string, ratin
 ipcMain.handle("pi:prompt", async (_event, payload: unknown) => {
 	await ensureDesktopSession();
 	const prompt = normalizePromptPayload(payload);
-	await captureLastTurnBase();
-	await getSession().prompt(prompt.text, {
-		images: prompt.images,
-		streamingBehavior: getSession().isStreaming ? "followUp" : undefined,
-	});
+	if (getSession().isStreaming || getSession().pendingMessageCount > 0 || getQueuedPrompts().length > 0) {
+		queuePrompt(prompt);
+	} else {
+		await submitPrompt(prompt);
+	}
 	const next = serializeState();
 	send("pi:state", next);
 	return next;
@@ -1903,11 +2026,10 @@ ipcMain.handle("pi:prompt", async (_event, payload: unknown) => {
 ipcMain.handle("pi:queue-prompt", async (_event, payload: unknown) => {
 	await ensureDesktopSession();
 	const prompt = normalizePromptPayload(payload);
-	if (getSession().isStreaming || getSession().pendingMessageCount > 0) {
-		await getSession().followUp(prompt.text, prompt.images);
+	if (getSession().isStreaming || getSession().pendingMessageCount > 0 || getQueuedPrompts().length > 0) {
+		queuePrompt(prompt);
 	} else {
-		await captureLastTurnBase();
-		await getSession().prompt(prompt.text, { images: prompt.images });
+		await submitPrompt(prompt);
 	}
 	const next = serializeState();
 	send("pi:state", next);
@@ -1919,9 +2041,29 @@ ipcMain.handle("pi:steer-prompt", async (_event, payload: unknown) => {
 	if (getSession().isStreaming || getSession().pendingMessageCount > 0) {
 		await getSession().steer(prompt.text, prompt.images);
 	} else {
-		await captureLastTurnBase();
-		await getSession().prompt(prompt.text, { images: prompt.images });
+		await submitPrompt(prompt);
 	}
+	const next = serializeState();
+	send("pi:state", next);
+	return next;
+});
+ipcMain.handle("pi:take-queued-prompt", async (_event, id: string) => {
+	await ensureDesktopSession();
+	const queuedPrompt = removeQueuedPrompt(id);
+	const next = serializeState();
+	send("pi:state", next);
+	return { state: next, prompt: queuedPrompt };
+});
+ipcMain.handle("pi:steer-queued-prompt", async (_event, id: string) => {
+	await ensureDesktopSession();
+	const queuedPrompt = getQueuedPrompts().find((prompt) => prompt.id === id);
+	if (!queuedPrompt) return serializeState();
+	if (getSession().isStreaming || getSession().pendingMessageCount > 0) {
+		await getSession().steer(queuedPrompt.text, queuedPrompt.images);
+	} else {
+		await submitPrompt(queuedPrompt);
+	}
+	removeQueuedPrompt(id);
 	const next = serializeState();
 	send("pi:state", next);
 	return next;

@@ -21,6 +21,8 @@ const api = {
 	steerPrompt: (
 		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
 	) => ipcRenderer.invoke("pi:steer-prompt", message),
+	takeQueuedPrompt: (id: string) => ipcRenderer.invoke("pi:take-queued-prompt", id),
+	steerQueuedPrompt: (id: string) => ipcRenderer.invoke("pi:steer-queued-prompt", id),
 	abort: () => ipcRenderer.invoke("pi:abort"),
 	chooseContext: (kind: "files" | "folder" | "workspace") => ipcRenderer.invoke("pi:choose-context", kind),
 	setCwd: (cwd: string) => ipcRenderer.invoke("pi:set-cwd", cwd),
