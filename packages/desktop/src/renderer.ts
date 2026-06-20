@@ -13,6 +13,7 @@ type DesktopState = {
 		contextWindow: number;
 		percent: number | null;
 	};
+	lastTurnDiff?: ParsedDiff;
 	thinkingLevel?: string;
 	availableThinkingLevels?: string[];
 	authRequired: boolean;

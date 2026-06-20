@@ -76,6 +76,7 @@ type DesktopState = {
 		contextWindow: number;
 		percent: number | null;
 	};
+	lastTurnDiff?: ParsedDiff;
 	thinkingLevel?: string;
 	availableThinkingLevels?: string[];
 	authRequired: boolean;
@@ -100,6 +101,12 @@ type DesktopCurrentUser = {
 };
 
 type DesktopDiffScope = "working-tree" | "staged" | "last-turn";
+
+type DesktopTurnSnapshot = {
+	baseRef?: string;
+	diff?: ParsedDiff;
+	untrackedPaths: Set<string>;
+};
 
 type DesktopGleanAuth = {
 	endpoint: string;
@@ -129,6 +136,8 @@ let currentSessionDir: string | undefined;
 const providerAllowlist = ["glean"];
 const envSessionDir = "PI_CODING_AGENT_SESSION_DIR";
 const responseFeedbackEntryType = "cowork_response_feedback";
+const turnDiffEntryType = "cowork_turn_diff";
+const turnSnapshotsBySessionId = new Map<string, DesktopTurnSnapshot>();
 let isQuitting = false;
 let pendingSessionSnapshot: NodeJS.Timeout | undefined;
 
@@ -337,6 +346,44 @@ function replayResponseFeedback(
 	return feedback;
 }
 
+function isParsedDiff(value: unknown): value is ParsedDiff {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as Partial<ParsedDiff>;
+	return (
+		Array.isArray(candidate.files) &&
+		candidate.files.every(
+			(file) =>
+				Boolean(file) &&
+				typeof file === "object" &&
+				typeof (file as { newPath?: unknown }).newPath === "string" &&
+				typeof (file as { oldPath?: unknown }).oldPath === "string" &&
+				typeof (file as { additions?: unknown }).additions === "number" &&
+				typeof (file as { deletions?: unknown }).deletions === "number" &&
+				Array.isArray((file as { hunks?: unknown }).hunks),
+		) &&
+		typeof candidate.totalAdditions === "number" &&
+		typeof candidate.totalDeletions === "number"
+	);
+}
+
+function latestTurnDiff(entries: ReturnType<SessionManager["getBranch"]>): ParsedDiff | undefined {
+	let latest: ParsedDiff | undefined;
+	for (const entry of entries) {
+		if (entry.type !== "custom" || entry.customType !== turnDiffEntryType) continue;
+		if (isParsedDiff(entry.data)) latest = entry.data;
+	}
+	return latest;
+}
+
+function hydrateLastTurnDiff(session: AgentSession): void {
+	const diff = latestTurnDiff(session.sessionManager.getBranch());
+	if (diff) {
+		turnSnapshotsBySessionId.set(session.sessionId, { diff, untrackedPaths: new Set<string>() });
+	} else {
+		turnSnapshotsBySessionId.delete(session.sessionId);
+	}
+}
+
 function serializeSessionInfo(session: SessionInfo): DesktopSessionInfo {
 	return {
 		path: session.path,
@@ -480,6 +527,7 @@ function serializeState(): DesktopState {
 		sessionName: session.sessionManager.getSessionName(),
 		model: hasRealModel && model ? { provider: model.provider, id: model.id } : undefined,
 		contextUsage: session.getContextUsage(),
+		lastTurnDiff: turnSnapshotsBySessionId.get(session.sessionId)?.diff,
 		thinkingLevel: session.thinkingLevel,
 		availableThinkingLevels: session.getAvailableThinkingLevels(),
 		authRequired: availableModelCount === 0,
@@ -536,6 +584,9 @@ function flushSessionSnapshot(): void {
 
 function handleSessionEvent(event: AgentSessionEvent): void {
 	send("pi:event", event);
+	if (event.type === "agent_end" && !event.willRetry) {
+		captureLastTurnDiff().catch(() => {});
+	}
 	if (event.type === "message_update" || event.type === "tool_execution_update") {
 		scheduleSessionSnapshot();
 		return;
@@ -608,6 +659,7 @@ async function createDesktopSessionInner(
 		sessionManager,
 		sessionStartEvent: { type: "session_start", reason: "startup" },
 	});
+	hydrateLastTurnDiff(current.session);
 	unsubscribeSession = current.session.subscribe(handleSessionEvent);
 	flushSessionSnapshot();
 	return serializeState();
@@ -725,9 +777,19 @@ async function getUntrackedDiff(cwd: string, context: number, paths: string[]): 
 
 async function getDesktopDiff(scope: DesktopDiffScope = "working-tree", context = 3): Promise<ParsedDiff> {
 	await ensureDesktopSession();
+	const session = getSession();
 	const unifiedContext = Number.isFinite(context) ? Math.max(0, Math.min(20, Math.trunc(context))) : 3;
 	const unified = `--unified=${unifiedContext}`;
-	const args = scope === "staged" ? ["diff", "--cached", unified] : ["diff", unified];
+	const snapshot = turnSnapshotsBySessionId.get(session.sessionId);
+	if (scope === "last-turn" && snapshot?.diff && !snapshot.baseRef) {
+		return snapshot.diff;
+	}
+	const args =
+		scope === "staged"
+			? ["diff", "--cached", unified]
+			: scope === "last-turn" && snapshot?.baseRef
+				? ["diff", unified, snapshot.baseRef]
+				: ["diff", unified];
 	try {
 		const [{ stdout: trackedDiff }, untrackedPaths] = await Promise.all([
 			execFileAsync("git", args, {
@@ -737,12 +799,53 @@ async function getDesktopDiff(scope: DesktopDiffScope = "working-tree", context 
 			}),
 			scope === "staged" ? Promise.resolve<string[]>([]) : getUntrackedPaths(currentCwd),
 		]);
-		const untrackedDiff = await getUntrackedDiff(currentCwd, unifiedContext, untrackedPaths);
+		const scopedUntrackedPaths =
+			scope === "last-turn" && snapshot
+				? untrackedPaths.filter((filePath) => !snapshot.untrackedPaths.has(filePath))
+				: untrackedPaths;
+		const untrackedDiff = await getUntrackedDiff(currentCwd, unifiedContext, scopedUntrackedPaths);
 		return parseUnifiedDiff([trackedDiff, untrackedDiff].filter(Boolean).join("\n"));
 	} catch (error) {
 		console.error("[desktop] getDiff failed:", error instanceof Error ? error.message : error);
 		return { files: [], totalAdditions: 0, totalDeletions: 0 };
 	}
+}
+
+async function captureLastTurnBase(): Promise<void> {
+	await ensureDesktopSession();
+	const session = getSession();
+	const snapshot: DesktopTurnSnapshot = { untrackedPaths: new Set<string>() };
+	turnSnapshotsBySessionId.set(session.sessionId, snapshot);
+	publishState();
+	try {
+		snapshot.untrackedPaths = new Set(await getUntrackedPaths(currentCwd));
+		const { stdout } = await execFileAsync("git", ["stash", "create"], {
+			cwd: currentCwd,
+		});
+		const sha = stdout.trim();
+		if (sha) {
+			snapshot.baseRef = sha;
+			return;
+		}
+		const { stdout: headSha } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+			cwd: currentCwd,
+		});
+		snapshot.baseRef = headSha.trim();
+	} catch {
+		snapshot.baseRef = undefined;
+		snapshot.untrackedPaths = new Set();
+	}
+}
+
+async function captureLastTurnDiff(): Promise<void> {
+	await ensureDesktopSession();
+	const session = getSession();
+	const snapshot = turnSnapshotsBySessionId.get(session.sessionId);
+	if (!snapshot) return;
+	snapshot.diff = await getDesktopDiff("last-turn", 0);
+	snapshot.baseRef = undefined;
+	session.sessionManager.appendCustomEntry(turnDiffEntryType, snapshot.diff);
+	publishState();
 }
 
 async function createWindow(): Promise<void> {
@@ -1665,6 +1768,7 @@ ipcMain.handle("pi:set-response-feedback", async (_event, entryId: string, ratin
 ipcMain.handle("pi:prompt", async (_event, payload: unknown) => {
 	await ensureDesktopSession();
 	const prompt = normalizePromptPayload(payload);
+	await captureLastTurnBase();
 	await getSession().prompt(prompt.text, {
 		images: prompt.images,
 		streamingBehavior: getSession().isStreaming ? "followUp" : undefined,
