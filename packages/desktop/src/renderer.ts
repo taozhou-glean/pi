@@ -530,6 +530,7 @@ const toolStackOpenStateByKey = new Map<string, boolean>();
 const expandedTurnWorkKeys = new Set<string>();
 const sessionStatusByKey = new Map<string, SessionStatus>();
 const sessionNoticesBySessionId = new Map<string, SessionNotice[]>();
+const activeToolExecutions = new Set<string>();
 const diffLineMetadata = new WeakMap<HTMLElement, { file: DiffFile; line: DiffLine }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
@@ -540,6 +541,7 @@ let selectedSlashCommandIndex = 0;
 let isComposerBusy = false;
 let isAbortingRun = false;
 let sessionRecoveryError: SessionRecoveryError | undefined;
+let activeAgentRun = false;
 const messagePageSize = 120;
 const projectSessionPageSize = 5;
 const projectSessionLimits = new Map<string, number>();
@@ -1224,13 +1226,12 @@ async function executeSlashCommand(input: string): Promise<void> {
 	autosizePrompt();
 	syncSendButtonState();
 	setBusy(true);
-	showStreamingIndicator();
 	try {
 		await command.run(rawArgs.trim());
 	} catch (error) {
 		showError(error);
 	} finally {
-		setBusy(Boolean(state?.isStreaming));
+		setBusy(isRunActive());
 	}
 }
 
@@ -1270,7 +1271,12 @@ function keepMessagesPinnedAfterComposerResize(): void {
 }
 
 function isRunActive(nextState = state): boolean {
-	return Boolean(nextState?.isStreaming || (nextState?.pendingMessageCount ?? 0) > 0);
+	return Boolean(
+		activeAgentRun ||
+			activeToolExecutions.size > 0 ||
+			nextState?.isStreaming ||
+			(nextState?.pendingMessageCount ?? 0) > 0,
+	);
 }
 
 function syncComposerHint(): void {
@@ -1318,7 +1324,7 @@ function syncStreamingIndicator(): void {
 	const assistantHasContent =
 		lastMessage?.role === "assistant" &&
 		Boolean(contentText(lastMessage).trim() || lastMessage.content.length > 0 || lastMessage.toolCalls?.length);
-	if (!isComposerBusy || assistantHasContent) {
+	if (!isComposerBusy || activeToolExecutions.size > 0 || assistantHasContent) {
 		hideStreamingIndicator();
 		return;
 	}
@@ -2743,6 +2749,11 @@ function renderState(next: DesktopState): void {
 			!sessionChanged &&
 			(previous.isStreaming !== next.isStreaming || previous.pendingMessageCount !== next.pendingMessageCount),
 	);
+	if (sessionChanged) {
+		activeAgentRun = false;
+		activeToolExecutions.clear();
+		isAbortingRun = false;
+	}
 	state = next;
 	restoreProjectLayout(next.cwd);
 	const requiresAuth = next.authRequired;
@@ -5856,11 +5867,41 @@ window.piDesktop.onEvent((event) => {
 		const status = (event as { status?: DesktopEnvironmentStatus }).status;
 		if (status) renderEnvironment(status);
 	}
+	if (typed.type === "agent_start") {
+		activeAgentRun = true;
+		const active = activeSession();
+		if (active) {
+			active.isRunning = true;
+			setSessionStatus(active, "running");
+		}
+		setBusy(true);
+		renderSessionList();
+	}
+	if (typed.type === "tool_execution_start" && typed.toolCallId) {
+		activeToolExecutions.add(typed.toolCallId);
+		setBusy(true);
+		hideStreamingIndicator();
+	}
 	if (typed.type === "tool_execution_end" && typed.toolCallId) {
+		activeToolExecutions.delete(typed.toolCallId);
 		completedToolExecutions.set(typed.toolCallId, { isError: typed.isError === true });
+		setBusy(isRunActive());
 		window.piDesktop.getMessages().then(renderMessages).catch(showError);
 	}
 	if (typed.type === "agent_end") {
+		if ((event as { willRetry?: boolean }).willRetry) {
+			setBusy(true);
+			return;
+		}
+		activeAgentRun = false;
+		activeToolExecutions.clear();
+		const active = activeSession();
+		if (active) {
+			active.isRunning = false;
+			setSessionStatus(active, undefined);
+		}
+		setBusy(isRunActive());
+		renderSessionList();
 		Promise.all([
 			refreshGit(),
 			refreshSessions(),
