@@ -1,9 +1,9 @@
 import { Buffer } from "node:buffer";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, extname, resolve } from "node:path";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -1098,10 +1098,30 @@ function serializeSessionExport(): { exportedAt: string; state: DesktopState; me
 	};
 }
 
+function safeExportFileName(value: string | undefined): string {
+	const normalized = (value || "pi-desktop-chat")
+		.trim()
+		.replace(/[^a-z0-9._-]+/gi, "-")
+		.replace(/^-+|-+$/g, "");
+	return `${normalized || "pi-desktop-chat"}.json`;
+}
+
 async function getSessionLogText(): Promise<string> {
 	const sessionFile = getSession().sessionFile;
 	if (sessionFile && existsSync(sessionFile)) return readFile(sessionFile, "utf8");
 	return JSON.stringify(serializeSessionExport(), null, 2);
+}
+
+function pastedTextTempFileName(): string {
+	const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+	return `pasted-text-${timestamp}.txt`;
+}
+
+async function writePastedTextTempFile(text: string): Promise<DesktopContextSelection> {
+	const dir = await mkdtemp(join(tmpdir(), "pi-desktop-paste-"));
+	const path = join(dir, pastedTextTempFileName());
+	await writeFile(path, text, "utf8");
+	return { type: "path", path, name: basename(path) };
 }
 
 function send(channel: string, payload: unknown): void {
@@ -2452,6 +2472,22 @@ ipcMain.handle("pi:get-session-log", async () => {
 	await ensureDesktopSession();
 	return getSessionLogText();
 });
+ipcMain.handle("pi:export-session", async () => {
+	await ensureDesktopSession();
+	const exportPayload = serializeSessionExport();
+	const result = await dialog.showSaveDialog(mainWindow!, {
+		defaultPath: safeExportFileName(exportPayload.state.sessionName || exportPayload.state.sessionId),
+		filters: [{ name: "JSON", extensions: ["json"] }],
+		title: "Export Pi Desktop chat",
+	});
+	if (result.canceled || !result.filePath) return { canceled: true };
+	await writeFile(result.filePath, JSON.stringify(exportPayload, null, 2), "utf8");
+	return { canceled: false, filePath: result.filePath };
+});
+ipcMain.handle("pi:show-item-in-folder", (_event, filePath: string) => {
+	if (typeof filePath !== "string" || !filePath) return;
+	shell.showItemInFolder(filePath);
+});
 ipcMain.handle("pi:get-session-deep-link", async () => {
 	await ensureDesktopSession();
 	return `pi://session/${encodeURIComponent(getSession().sessionId)}`;
@@ -2585,6 +2621,10 @@ ipcMain.handle("pi:abort", async () => {
 	const next = serializeState();
 	send("pi:state", next);
 	return next;
+});
+ipcMain.handle("pi:create-temp-text-file", async (_event, text: string) => {
+	if (typeof text !== "string" || text.length === 0) throw new Error("No text provided.");
+	return writePastedTextTempFile(text);
 });
 ipcMain.handle("pi:choose-context", async (_event, kind: "files" | "folder" | "workspace") => {
 	await ensureDesktopSession();

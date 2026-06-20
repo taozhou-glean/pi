@@ -7,6 +7,8 @@ const api = {
 	getMessages: () => ipcRenderer.invoke("pi:get-messages"),
 	getSessionLog: () => ipcRenderer.invoke("pi:get-session-log"),
 	getSessionDeepLink: () => ipcRenderer.invoke("pi:get-session-deep-link"),
+	exportSession: () => ipcRenderer.invoke("pi:export-session"),
+	showItemInFolder: (filePath: string) => ipcRenderer.invoke("pi:show-item-in-folder", filePath),
 	listSessions: () => ipcRenderer.invoke("pi:list-sessions"),
 	newSession: () => ipcRenderer.invoke("pi:new-session"),
 	switchSession: (sessionPath: string) => ipcRenderer.invoke("pi:switch-session", sessionPath),
@@ -25,6 +27,7 @@ const api = {
 	steerQueuedPrompt: (id: string) => ipcRenderer.invoke("pi:steer-queued-prompt", id),
 	resolveClarification: (id: string, answer: string) => ipcRenderer.invoke("pi:resolve-clarification", id, answer),
 	rejectClarification: (id: string) => ipcRenderer.invoke("pi:reject-clarification", id),
+	createTempTextFile: (text: string) => ipcRenderer.invoke("pi:create-temp-text-file", text),
 	setPermissionMode: (mode: "ask" | "acceptEdits" | "bypassPermissions") =>
 		ipcRenderer.invoke("pi:set-permission-mode", mode),
 	resolvePermission: (id: string, reply: "allowOnce" | "allowAlways" | "reject") =>

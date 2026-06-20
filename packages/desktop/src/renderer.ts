@@ -216,6 +216,8 @@ type DesktopLoginResult = {
 	message: string;
 };
 
+type DesktopExportSessionResult = { canceled: true } | { canceled: false; filePath: string };
+
 type DesktopCurrentUser = {
 	name?: string;
 	email?: string;
@@ -248,6 +250,8 @@ type PiDesktopApi = {
 	getMessages(): Promise<DesktopMessage[]>;
 	getSessionLog(): Promise<string>;
 	getSessionDeepLink(): Promise<string>;
+	exportSession(): Promise<DesktopExportSessionResult>;
+	showItemInFolder(filePath: string): Promise<void>;
 	listSessions(): Promise<DesktopSessionInfo[]>;
 	newSession(): Promise<DesktopState>;
 	switchSession(sessionPath: string): Promise<DesktopState>;
@@ -272,6 +276,7 @@ type PiDesktopApi = {
 	steerQueuedPrompt(id: string): Promise<DesktopState>;
 	resolveClarification(id: string, answer: string): Promise<DesktopState>;
 	rejectClarification(id: string): Promise<DesktopState>;
+	createTempTextFile(text: string): Promise<Extract<DesktopContextSelection, { type: "path" }>>;
 	setPermissionMode(mode: DesktopPermissionMode): Promise<DesktopState>;
 	resolvePermission(id: string, reply: DesktopPermissionReply): Promise<DesktopState>;
 	abort(): Promise<DesktopState>;
@@ -489,6 +494,7 @@ const themeStorageKey = "pi-desktop-theme";
 const layoutStorageKey = "pi-desktop-layout";
 const pinnedSessionsStorageKey = "pi-pinned-sessions";
 const archivedSessionsStorageKey = "pi-archived-sessions";
+const pastedTextFileThreshold = 24_000;
 const pinnedSessionKeys = new Set<string>(JSON.parse(localStorage.getItem(pinnedSessionsStorageKey) || "[]"));
 const archivedSessionKeys = new Set<string>(JSON.parse(localStorage.getItem(archivedSessionsStorageKey) || "[]"));
 let showArchivedSessions = false;
@@ -3765,6 +3771,16 @@ function readImageAttachment(file: File): Promise<ComposerImageAttachment> {
 	});
 }
 
+function largeTextFromClipboard(event: ClipboardEvent): string {
+	const text = event.clipboardData?.getData("text/plain") ?? "";
+	return text.length >= pastedTextFileThreshold ? text : "";
+}
+
+async function addPastedTextFile(text: string): Promise<void> {
+	const selection = await window.piDesktop.createTempTextFile(text);
+	addComposerFileSelections([selection]);
+}
+
 function imageFilesFromClipboard(event: ClipboardEvent): File[] {
 	const data = event.clipboardData;
 	if (!data) return [];
@@ -3958,9 +3974,15 @@ promptInput.addEventListener("input", () => {
 
 promptInput.addEventListener("paste", (event) => {
 	const files = imageFilesFromClipboard(event);
-	if (files.length === 0) return;
+	if (files.length > 0) {
+		event.preventDefault();
+		addComposerImageFiles(files).catch(showError);
+		return;
+	}
+	const largeText = largeTextFromClipboard(event);
+	if (!largeText) return;
 	event.preventDefault();
-	addComposerImageFiles(files).catch(showError);
+	addPastedTextFile(largeText).catch(showError);
 });
 
 messagesEl.addEventListener("scroll", () => {
