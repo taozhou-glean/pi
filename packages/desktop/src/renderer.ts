@@ -119,6 +119,22 @@ type ParsedDiff = {
 	totalDeletions: number;
 };
 
+type ReviewCommentAnchor = {
+	filePath: string;
+	side: "old" | "new";
+	startOldLine?: number;
+	startNewLine?: number;
+	endOldLine?: number;
+	endNewLine?: number;
+};
+
+type ReviewDraftComment = ReviewCommentAnchor & {
+	id: string;
+	body: string;
+	status: "draft";
+	createdAt: number;
+};
+
 type DesktopLogoutResult = {
 	state: DesktopState;
 	message: string;
@@ -327,6 +343,11 @@ const slashCommandMenu = document.createElement("div");
 slashCommandMenu.className = "composer-menu slash-command-menu";
 slashCommandMenu.hidden = true;
 promptInput.before(slashCommandMenu);
+const reviewCommentsBadge = document.createElement("div");
+reviewCommentsBadge.id = "review-comments-badge";
+reviewCommentsBadge.className = "review-comments-badge";
+reviewCommentsBadge.hidden = true;
+promptInput.before(reviewCommentsBadge);
 const imagePreviewOverlay = document.createElement("div");
 imagePreviewOverlay.className = "image-preview-overlay";
 imagePreviewOverlay.hidden = true;
@@ -341,7 +362,12 @@ let composerFiles: ComposerFileAttachment[] = [];
 let switchingSessionPath: string | undefined;
 let renderedSessionId: string | undefined;
 let isEditingSessionTitle = false;
+let reviewComments: ReviewDraftComment[] = [];
+let reviewDiffData: ParsedDiff | undefined;
+let activeCommentAnchor: ReviewCommentAnchor | undefined;
+let rangeSelectStart: { filePath: string; oldLine?: number; newLine?: number; side: "old" | "new" } | undefined;
 const completedToolExecutions = new Map<string, { isError: boolean }>();
+const diffLineMetadata = new WeakMap<HTMLElement, { file: DiffFile; line: DiffLine }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
 let selectedSlashCommandIndex = 0;
@@ -1784,7 +1810,12 @@ function renderState(next: DesktopState): void {
 	}
 	syncComposerModelSelection();
 	if (!previous || previous.sessionId !== next.sessionId || previous.cwd !== next.cwd) {
+		activeCommentAnchor = undefined;
+		reviewDiffData = undefined;
+		loadReviewComments();
 		renderSessionList();
+	} else {
+		renderReviewCommentsBadge();
 	}
 }
 
@@ -2311,12 +2342,65 @@ function diffScope(): "working-tree" | "staged" | "last-turn" {
 	return value === "staged" || value === "last-turn" ? value : "working-tree";
 }
 
+function reviewCommentsStorageKey(): string | undefined {
+	const identity = state?.sessionFile ?? state?.sessionId;
+	return identity ? `pi-review-comments:${identity}` : undefined;
+}
+
+function isReviewDraftComment(value: unknown): value is ReviewDraftComment {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const comment = value as Partial<ReviewDraftComment>;
+	return (
+		typeof comment.id === "string" &&
+		typeof comment.filePath === "string" &&
+		typeof comment.body === "string" &&
+		(comment.side === "old" || comment.side === "new") &&
+		comment.status === "draft"
+	);
+}
+
+function loadReviewComments(): void {
+	const key = reviewCommentsStorageKey();
+	if (!key) {
+		reviewComments = [];
+		renderReviewCommentsBadge();
+		return;
+	}
+	try {
+		const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+		reviewComments = Array.isArray(parsed) ? parsed.filter(isReviewDraftComment) : [];
+	} catch {
+		reviewComments = [];
+	}
+	renderReviewCommentsBadge();
+}
+
+function persistReviewComments(): void {
+	const key = reviewCommentsStorageKey();
+	if (!key) return;
+	const drafts = reviewComments.filter((comment) => comment.status === "draft");
+	if (drafts.length > 0) {
+		localStorage.setItem(key, JSON.stringify(drafts));
+	} else {
+		localStorage.removeItem(key);
+	}
+}
+
+function getDraftComments(): ReviewDraftComment[] {
+	return reviewComments.filter((comment) => comment.status === "draft");
+}
+
 function renderReview(diff: ParsedDiff): void {
 	reviewContent.replaceChildren();
 	if (diff.files.length === 0) {
 		const empty = document.createElement("div");
 		empty.className = "review-empty";
-		empty.textContent = diffScope() === "staged" ? "No staged changes" : "No changes";
+		empty.textContent =
+			diffScope() === "last-turn"
+				? "No changes in last turn"
+				: diffScope() === "staged"
+					? "No staged changes"
+					: "No changes";
 		reviewContent.append(empty);
 		reviewStats.textContent = "";
 		return;
@@ -2342,24 +2426,79 @@ function renderDiffFile(file: DiffFile): HTMLElement {
 	section.append(header);
 
 	for (const hunk of file.hunks) {
-		const hunkEl = document.createElement("div");
-		hunkEl.className = "diff-hunk";
-		const hunkHeader = document.createElement("div");
-		hunkHeader.className = "diff-hunk-header";
-		hunkHeader.textContent = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@${
-			hunk.header ? ` ${hunk.header}` : ""
-		}`;
-		hunkEl.append(hunkHeader);
-		for (const line of hunk.lines) hunkEl.append(renderDiffLine(line));
-		section.append(hunkEl);
+		section.append(renderDiffHunk(file, hunk));
 	}
 
 	return section;
 }
 
-function renderDiffLine(line: DiffLine): HTMLElement {
+function renderDiffHunk(file: DiffFile, hunk: DiffHunk): HTMLElement {
+	const hunkEl = document.createElement("div");
+	hunkEl.className = "diff-hunk";
+	const hunkHeader = document.createElement("div");
+	hunkHeader.className = "diff-hunk-header";
+	hunkHeader.textContent = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@${
+		hunk.header ? ` ${hunk.header}` : ""
+	}`;
+	hunkEl.append(hunkHeader);
+	for (const line of hunk.lines) {
+		hunkEl.append(renderDiffLine(file, line));
+		for (const comment of reviewComments.filter(
+			(candidate) =>
+				candidate.filePath === file.newPath &&
+				candidate.endOldLine === line.oldLine &&
+				candidate.endNewLine === line.newLine &&
+				candidate.status === "draft",
+		)) {
+			hunkEl.append(renderDraftComment(comment));
+		}
+		if (
+			activeCommentAnchor &&
+			activeCommentAnchor.filePath === file.newPath &&
+			activeCommentAnchor.endOldLine === line.oldLine &&
+			activeCommentAnchor.endNewLine === line.newLine
+		) {
+			hunkEl.append(createCommentBox(file));
+		}
+	}
+	return hunkEl;
+}
+
+function lineIndex(line: DiffLine): number {
+	return line.newLine ?? line.oldLine ?? 0;
+}
+
+function anchorStartIndex(anchor: ReviewCommentAnchor): number {
+	return anchor.startNewLine ?? anchor.startOldLine ?? 0;
+}
+
+function anchorEndIndex(anchor: ReviewCommentAnchor): number {
+	return anchor.endNewLine ?? anchor.endOldLine ?? 0;
+}
+
+function isLineInActiveRange(file: DiffFile, line: DiffLine): boolean {
+	if (!activeCommentAnchor || activeCommentAnchor.filePath !== file.newPath) return false;
+	const current = lineIndex(line);
+	const start = anchorStartIndex(activeCommentAnchor);
+	const end = anchorEndIndex(activeCommentAnchor);
+	return current >= Math.min(start, end) && current <= Math.max(start, end);
+}
+
+function isLineInDraftRange(file: DiffFile, line: DiffLine): boolean {
+	const current = lineIndex(line);
+	return reviewComments.some((comment) => {
+		if (comment.filePath !== file.newPath || comment.status !== "draft") return false;
+		const start = anchorStartIndex(comment);
+		const end = anchorEndIndex(comment);
+		return current >= Math.min(start, end) && current <= Math.max(start, end);
+	});
+}
+
+function renderDiffLine(file: DiffFile, line: DiffLine): HTMLElement {
 	const row = document.createElement("div");
 	row.className = `diff-line ${line.type}`;
+	row.classList.toggle("line-range-active", isLineInActiveRange(file, line));
+	row.classList.toggle("line-range-draft", isLineInDraftRange(file, line));
 	const oldLine = document.createElement("span");
 	oldLine.className = "diff-line-number";
 	oldLine.textContent = line.oldLine === undefined ? "" : String(line.oldLine);
@@ -2372,20 +2511,302 @@ function renderDiffLine(line: DiffLine): HTMLElement {
 	const text = document.createElement("code");
 	text.className = "diff-line-text";
 	text.textContent = line.text || " ";
-	row.append(oldLine, newLine, marker, text);
+	const action = document.createElement("span");
+	action.className = "diff-line-action";
+	const addComment = document.createElement("button");
+	addComment.type = "button";
+	addComment.className = "diff-add-comment-button";
+	addComment.textContent = "+";
+	addComment.title = "Add comment";
+	addComment.addEventListener("mousedown", (event) => {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		rangeSelectStart = {
+			filePath: file.newPath,
+			oldLine: line.oldLine,
+			newLine: line.newLine,
+			side: line.type === "delete" ? "old" : "new",
+		};
+		activeCommentAnchor = {
+			filePath: file.newPath,
+			side: rangeSelectStart.side,
+			startOldLine: line.oldLine,
+			startNewLine: line.newLine,
+			endOldLine: line.oldLine,
+			endNewLine: line.newLine,
+		};
+		updateRangeHighlighting(file);
+	});
+	action.append(addComment);
+	row.addEventListener("mouseenter", () => {
+		if (!rangeSelectStart || rangeSelectStart.filePath !== file.newPath) return;
+		const start = rangeSelectStart.newLine ?? rangeSelectStart.oldLine ?? 0;
+		const end = line.newLine ?? line.oldLine ?? 0;
+		if (start <= end) {
+			activeCommentAnchor = {
+				filePath: file.newPath,
+				side: rangeSelectStart.side,
+				startOldLine: rangeSelectStart.oldLine,
+				startNewLine: rangeSelectStart.newLine,
+				endOldLine: line.oldLine,
+				endNewLine: line.newLine,
+			};
+		} else {
+			activeCommentAnchor = {
+				filePath: file.newPath,
+				side: rangeSelectStart.side,
+				startOldLine: line.oldLine,
+				startNewLine: line.newLine,
+				endOldLine: rangeSelectStart.oldLine,
+				endNewLine: rangeSelectStart.newLine,
+			};
+		}
+		updateRangeHighlighting(file);
+	});
+	row.append(oldLine, newLine, marker, action, text);
+	diffLineMetadata.set(row, { file, line });
 	return row;
+}
+
+function updateRangeHighlighting(file: DiffFile): void {
+	for (const row of reviewContent.querySelectorAll<HTMLElement>(".diff-line")) {
+		const metadata = diffLineMetadata.get(row);
+		if (!metadata || metadata.file.newPath !== file.newPath) continue;
+		row.classList.toggle("line-range-active", isLineInActiveRange(metadata.file, metadata.line));
+	}
+}
+
+function commentRangeLabel(anchor: ReviewCommentAnchor, prefix: string): string {
+	const side = anchor.side === "old" ? "L" : "R";
+	const start = anchor.side === "old" ? anchor.startOldLine : anchor.startNewLine;
+	const end = anchor.side === "old" ? anchor.endOldLine : anchor.endNewLine;
+	if (start !== undefined && end !== undefined && start !== end) return `${prefix} ${side}${start}-${side}${end}`;
+	return `${prefix} ${side}${start ?? end ?? ""}`.trim();
+}
+
+function createCommentBox(file: DiffFile): HTMLElement {
+	const box = document.createElement("div");
+	box.className = "review-comment-box";
+	const header = document.createElement("div");
+	header.className = "review-comment-header";
+	const label = document.createElement("span");
+	label.className = "review-comment-label";
+	label.textContent = "Local comment";
+	const anchor = document.createElement("span");
+	anchor.className = "review-comment-anchor";
+	anchor.textContent = activeCommentAnchor ? commentRangeLabel(activeCommentAnchor, "Comment on") : "Comment";
+	header.append(label, anchor);
+	box.append(header);
+
+	const textarea = document.createElement("textarea");
+	textarea.className = "review-comment-textarea";
+	textarea.placeholder = "Request change";
+	textarea.rows = 3;
+	box.append(textarea);
+
+	const actions = document.createElement("div");
+	actions.className = "review-comment-actions";
+	const cancel = document.createElement("button");
+	cancel.type = "button";
+	cancel.className = "review-btn-cancel";
+	cancel.textContent = "Cancel";
+	cancel.addEventListener("click", () => {
+		activeCommentAnchor = undefined;
+		if (reviewDiffData) renderReview(reviewDiffData);
+	});
+	const submit = document.createElement("button");
+	submit.type = "button";
+	submit.className = "review-btn-submit";
+	submit.textContent = "Comment";
+	submit.disabled = true;
+	textarea.addEventListener("input", () => {
+		submit.disabled = textarea.value.trim().length === 0;
+	});
+	submit.addEventListener("click", () => {
+		const body = textarea.value.trim();
+		if (body) saveDraftComment(file, body);
+	});
+	actions.append(cancel, submit);
+	box.append(actions);
+
+	requestAnimationFrame(() => textarea.focus());
+	textarea.addEventListener("keydown", (event) => {
+		if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+			event.preventDefault();
+			const body = textarea.value.trim();
+			if (body) saveDraftComment(file, body);
+		}
+		if (event.key === "Escape") {
+			activeCommentAnchor = undefined;
+			if (reviewDiffData) renderReview(reviewDiffData);
+		}
+	});
+	return box;
+}
+
+function saveDraftComment(file: DiffFile, body: string): void {
+	if (!activeCommentAnchor) return;
+	reviewComments.push({
+		...activeCommentAnchor,
+		id: `rc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+		filePath: file.newPath,
+		body,
+		status: "draft",
+		createdAt: Date.now(),
+	});
+	persistReviewComments();
+	activeCommentAnchor = undefined;
+	if (reviewDiffData) renderReview(reviewDiffData);
+	renderReviewCommentsBadge();
+	syncSendButtonState();
+}
+
+function removeDraftComment(commentId: string): void {
+	reviewComments = reviewComments.filter((comment) => comment.id !== commentId);
+	persistReviewComments();
+	if (reviewDiffData) renderReview(reviewDiffData);
+	renderReviewCommentsBadge();
+	syncSendButtonState();
+}
+
+function renderDraftComment(comment: ReviewDraftComment): HTMLElement {
+	const element = document.createElement("div");
+	element.className = "review-draft-comment";
+	const header = document.createElement("div");
+	header.className = "review-draft-header";
+	const range = document.createElement("span");
+	range.className = "review-draft-range";
+	range.textContent = commentRangeLabel(comment, "");
+	header.append(range);
+	const body = document.createElement("div");
+	body.className = "review-draft-body";
+	body.textContent = comment.body;
+	const actions = document.createElement("div");
+	actions.className = "review-draft-actions";
+	const remove = document.createElement("button");
+	remove.type = "button";
+	remove.className = "review-draft-remove";
+	remove.textContent = "Remove";
+	remove.addEventListener("click", () => removeDraftComment(comment.id));
+	actions.append(remove);
+	element.append(header, body, actions);
+	return element;
+}
+
+function renderReviewCommentsBadge(): void {
+	const drafts = getDraftComments();
+	reviewCommentsBadge.hidden = drafts.length === 0;
+	if (drafts.length === 0) {
+		reviewCommentsBadge.replaceChildren();
+		return;
+	}
+	reviewCommentsBadge.innerHTML = `
+		<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+		<span>${drafts.length} comment${drafts.length === 1 ? "" : "s"}</span>
+	`;
+}
+
+function buildAllCommentsPrompt(extraMessage: string): string {
+	const drafts = getDraftComments();
+	if (drafts.length === 0) return extraMessage;
+	const parts: string[] = [];
+	if (drafts.length === 1) {
+		const comment = drafts[0]!;
+		const start = comment.side === "old" ? comment.startOldLine : comment.startNewLine;
+		const end = comment.side === "old" ? comment.endOldLine : comment.endNewLine;
+		let heading = `Review comment on ${comment.filePath}`;
+		if (start !== undefined && end !== undefined && start !== end) heading += ` lines ${start}-${end}`;
+		else if (start !== undefined) heading += ` line ${start}`;
+		parts.push(`${heading}:\n\n${comment.body}`);
+	} else {
+		parts.push(
+			`${drafts.length} review comments:\n\n${drafts
+				.map((comment, index) => {
+					const start = comment.side === "old" ? comment.startOldLine : comment.startNewLine;
+					const end = comment.side === "old" ? comment.endOldLine : comment.endNewLine;
+					let location = comment.filePath;
+					if (start !== undefined && end !== undefined && start !== end) location += ` lines ${start}-${end}`;
+					else if (start !== undefined) location += ` line ${start}`;
+					return `${index + 1}. **${location}**: ${comment.body}`;
+				})
+				.join("\n")}`,
+		);
+	}
+
+	if (reviewDiffData) {
+		const contextBlocks: string[] = [];
+		const seen = new Set<string>();
+		for (const comment of drafts) {
+			const file = reviewDiffData.files.find((candidate) => candidate.newPath === comment.filePath);
+			if (!file) continue;
+			const key = `${comment.filePath}:${anchorStartIndex(comment)}:${anchorEndIndex(comment)}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			const lines = getLinesForComment(file, comment);
+			if (lines.length === 0) continue;
+			contextBlocks.push(
+				[
+					"```diff",
+					`--- a/${file.oldPath}`,
+					`+++ b/${file.newPath}`,
+					...lines.map((line) => `${line.type === "add" ? "+" : line.type === "delete" ? "-" : " "}${line.text}`),
+					"```",
+				].join("\n"),
+			);
+		}
+		if (contextBlocks.length > 0) parts.push(`Diff context:\n${contextBlocks.join("\n\n")}`);
+	}
+	if (extraMessage) parts.push(extraMessage);
+	return parts.join("\n\n");
+}
+
+function getLinesForComment(file: DiffFile, comment: ReviewDraftComment): DiffLine[] {
+	const start = anchorStartIndex(comment);
+	const end = anchorEndIndex(comment);
+	const result: DiffLine[] = [];
+	for (const hunk of file.hunks) {
+		for (const line of hunk.lines) {
+			const current = lineIndex(line);
+			if (current >= Math.min(start, end) && current <= Math.max(start, end)) result.push(line);
+		}
+	}
+	if (result.length > 0) return result;
+	for (const hunk of file.hunks) {
+		const hunkStart = hunk.newStart;
+		const hunkEnd = hunk.newStart + hunk.newLines - 1;
+		if (hunkEnd >= Math.min(start, end) && hunkStart <= Math.max(start, end)) return hunk.lines;
+	}
+	return [];
+}
+
+function markDraftCommentsSubmitted(): void {
+	reviewComments = reviewComments.filter((comment) => comment.status !== "draft");
+	persistReviewComments();
+	activeCommentAnchor = undefined;
+	renderReviewCommentsBadge();
+	syncSendButtonState();
+	if (reviewDiffData && layoutState.rightTab === "review") renderReview(reviewDiffData);
 }
 
 async function refreshReview(): Promise<void> {
 	reviewContent.innerHTML = '<div class="review-empty">Loading diff...</div>';
 	try {
-		renderReview(await window.piDesktop.getDiff(diffScope(), 3));
+		reviewDiffData = await window.piDesktop.getDiff(diffScope(), 3);
+		renderReview(reviewDiffData);
 	} catch (error) {
 		reviewStats.textContent = "";
 		reviewContent.innerHTML = '<div class="review-empty">Failed to load diff</div>';
 		showError(error);
 	}
 }
+
+document.addEventListener("mouseup", () => {
+	if (!rangeSelectStart) return;
+	const started = rangeSelectStart;
+	rangeSelectStart = undefined;
+	if (!activeCommentAnchor || activeCommentAnchor.filePath !== started.filePath || !reviewDiffData) return;
+	renderReview(reviewDiffData);
+});
 
 async function refreshModels(): Promise<void> {
 	models = await window.piDesktop.listModels();
@@ -2599,7 +3020,10 @@ function syncSendButtonState(): void {
 	}
 	sendButton.disabled =
 		Boolean(state?.authRequired) ||
-		(promptInput.value.trim().length === 0 && composerImages.length === 0 && composerFiles.length === 0);
+		(promptInput.value.trim().length === 0 &&
+			composerImages.length === 0 &&
+			composerFiles.length === 0 &&
+			getDraftComments().length === 0);
 }
 
 function closeImagePreview(): void {
@@ -2889,13 +3313,14 @@ async function abortCurrentRun(): Promise<void> {
 
 async function sendCurrentComposer(mode: "send" | "queue" | "steer" = "send"): Promise<void> {
 	const message = promptInput.value.trim();
-	if (!message && composerImages.length === 0 && composerFiles.length === 0) return;
+	const hasDraftComments = getDraftComments().length > 0;
+	if (!message && composerImages.length === 0 && composerFiles.length === 0 && !hasDraftComments) return;
 	if (message.startsWith("/")) {
 		if (mode !== "send" || isComposerBusy) {
 			showError("Slash commands cannot be queued or steered.");
 			return;
 		}
-		if (composerImages.length > 0 || composerFiles.length > 0) {
+		if (composerImages.length > 0 || composerFiles.length > 0 || hasDraftComments) {
 			showError("Slash commands cannot include attachments.");
 			return;
 		}
@@ -2908,7 +3333,7 @@ async function sendCurrentComposer(mode: "send" | "queue" | "steer" = "send"): P
 		mimeType: image.mimeType,
 	}));
 	promptInput.value = "";
-	const promptText = messageWithFileContext(message);
+	const promptText = buildAllCommentsPrompt(messageWithFileContext(message));
 	clearComposerAttachments();
 	autosizePrompt();
 	setBusy(true);
@@ -2922,6 +3347,7 @@ async function sendCurrentComposer(mode: "send" | "queue" | "steer" = "send"): P
 					? window.piDesktop.steerPrompt(payload)
 					: window.piDesktop.prompt(payload)),
 		);
+		if (hasDraftComments) markDraftCommentsSubmitted();
 		await refreshSessions();
 	} catch (error) {
 		showError(error);

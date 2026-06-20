@@ -547,7 +547,7 @@ button:disabled {
 
 .diff-line {
 	display: grid;
-	grid-template-columns: 36px 36px 14px minmax(0, 1fr);
+	grid-template-columns: 36px 36px 14px 24px minmax(0, 1fr);
 	min-width: max-content;
 }
 
@@ -557,6 +557,14 @@ button:disabled {
 
 .diff-line.delete {
 	background: color-mix(in srgb, #ef4444 10%, transparent);
+}
+
+.diff-line.line-range-active {
+	background: color-mix(in srgb, #2563eb 15%, transparent);
+}
+
+.diff-line.line-range-draft {
+	background: color-mix(in srgb, #2563eb 8%, transparent);
 }
 
 .diff-line-number {
@@ -571,10 +579,172 @@ button:disabled {
 	user-select: none;
 }
 
+.diff-line-action {
+	display: grid;
+	place-items: center;
+	min-width: 24px;
+}
+
+.diff-add-comment-button {
+	display: grid;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	min-height: 16px;
+	padding: 0;
+	border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+	border-radius: 50%;
+	background: var(--panel);
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1;
+	opacity: 0;
+}
+
+.diff-line:hover .diff-add-comment-button,
+.diff-add-comment-button:focus-visible,
+.line-range-active .diff-add-comment-button,
+.line-range-draft .diff-add-comment-button {
+	opacity: 1;
+}
+
+.diff-add-comment-button:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+	background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+	color: var(--accent-strong);
+}
+
 .diff-line-text {
 	padding-right: 10px;
 	color: var(--ink);
 	white-space: pre;
+}
+
+.review-comment-box {
+	margin: 0 12px 8px 94px;
+	padding: 12px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	font-family: var(--ui-font);
+}
+
+.review-comment-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-bottom: 8px;
+}
+
+.review-comment-label {
+	color: var(--ink);
+	font-size: 12px;
+	font-weight: 620;
+}
+
+.review-comment-anchor {
+	color: var(--faint);
+	font-size: 11px;
+}
+
+.review-comment-textarea {
+	width: 100%;
+	min-height: 60px;
+	max-height: 200px;
+	padding: 8px;
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	background: var(--paper);
+	color: var(--ink);
+	font: 13px var(--ui-font);
+	outline: none;
+	resize: vertical;
+}
+
+.review-comment-textarea:focus {
+	border-color: color-mix(in srgb, var(--accent) 70%, var(--line-strong));
+}
+
+.review-comment-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.review-comment-actions button {
+	padding: 4px 12px;
+	border-radius: 6px;
+	font-size: 12px;
+	font-weight: 560;
+}
+
+.review-btn-cancel {
+	border-color: transparent;
+	background: transparent;
+	color: var(--muted);
+}
+
+.review-btn-cancel:hover:not(:disabled) {
+	color: var(--ink);
+}
+
+.review-btn-submit {
+	border-color: var(--line-strong);
+	background: var(--secondary-bg);
+	color: var(--ink);
+}
+
+.review-btn-submit:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.review-draft-comment {
+	margin: 4px 12px 8px 94px;
+	padding: 8px 12px;
+	border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+	border-left: 3px solid var(--accent);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+	color: var(--ink);
+	font-family: var(--ui-font);
+	font-size: 12px;
+}
+
+.review-draft-header {
+	margin-bottom: 4px;
+}
+
+.review-draft-range {
+	color: var(--accent-strong);
+	font-size: 10px;
+	font-weight: 620;
+}
+
+.review-draft-body {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.review-draft-actions {
+	display: flex;
+	justify-content: flex-end;
+	margin-top: 6px;
+}
+
+.review-draft-remove {
+	padding: 2px 6px;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.review-draft-remove:hover:not(:disabled) {
+	background: color-mix(in srgb, #dc2626 10%, transparent);
+	color: #dc2626;
 }
 
 #app.left-collapsed .sidebar,
@@ -2872,6 +3042,29 @@ body.resizing-panels {
 
 .composer-attachments[hidden] {
 	display: none;
+}
+
+.review-comments-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	width: fit-content;
+	margin: 2px 4px 8px;
+	padding: 4px 10px;
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 560;
+}
+
+.review-comments-badge[hidden] {
+	display: none;
+}
+
+.review-comments-badge svg {
+	flex: none;
+	opacity: 0.72;
 }
 
 .composer-attachment {
