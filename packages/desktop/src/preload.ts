@@ -4,6 +4,7 @@ const api = {
 	init: () => ipcRenderer.invoke("pi:init"),
 	getState: () => ipcRenderer.invoke("pi:get-state"),
 	getCurrentUser: () => ipcRenderer.invoke("pi:get-current-user"),
+	getGleanAuth: () => ipcRenderer.invoke("pi:get-glean-auth"),
 	getMessages: () => ipcRenderer.invoke("pi:get-messages"),
 	getSessionLog: () => ipcRenderer.invoke("pi:get-session-log"),
 	getSessionDeepLink: () => ipcRenderer.invoke("pi:get-session-deep-link"),

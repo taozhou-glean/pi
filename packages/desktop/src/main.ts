@@ -2465,6 +2465,7 @@ ipcMain.handle("pi:get-state", async () => {
 	return serializeState();
 });
 ipcMain.handle("pi:get-current-user", async () => fetchCurrentGleanUser());
+ipcMain.handle("pi:get-glean-auth", async () => getGleanAuth());
 ipcMain.handle("pi:get-messages", async () => {
 	await ensureDesktopSession();
 	return serializeVisibleMessages();

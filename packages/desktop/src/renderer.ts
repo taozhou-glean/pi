@@ -225,6 +225,11 @@ type DesktopCurrentUser = {
 	endpoint?: string;
 };
 
+type DesktopGleanAuth = {
+	endpoint: string;
+	accessToken: string;
+};
+
 type ComposerImageAttachment = {
 	id: string;
 	data: string;
@@ -247,6 +252,7 @@ type PiDesktopApi = {
 	init(): Promise<DesktopState>;
 	getState(): Promise<DesktopState>;
 	getCurrentUser(): Promise<DesktopCurrentUser | undefined>;
+	getGleanAuth(): Promise<DesktopGleanAuth | undefined>;
 	getMessages(): Promise<DesktopMessage[]>;
 	getSessionLog(): Promise<string>;
 	getSessionDeepLink(): Promise<string>;
