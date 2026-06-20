@@ -243,6 +243,10 @@ const themeSelect = document.querySelector<HTMLSelectElement>("#theme-select")!;
 const gitBranch = document.querySelector<HTMLDivElement>("#git-branch")!;
 const gitStatus = document.querySelector<HTMLDivElement>("#git-status")!;
 const refreshGitButton = document.querySelector<HTMLButtonElement>("#refresh-git")!;
+const refreshReviewButton = document.querySelector<HTMLButtonElement>("#refresh-review")!;
+const reviewContent = document.querySelector<HTMLDivElement>("#review-content")!;
+const reviewStats = document.querySelector<HTMLSpanElement>("#review-stats")!;
+const reviewScopeSelect = document.querySelector<HTMLSelectElement>("#review-scope")!;
 const sessionTitle = document.querySelector<HTMLDivElement>("#session-title")!;
 const sessionTitleInput = document.createElement("input");
 sessionTitleInput.className = "session-title-input";
@@ -349,7 +353,7 @@ const autoExpandLeftWidth = 1140;
 type ThemePreference = "system" | "light" | "dark";
 
 type WindowPanelTab = "terminal" | "browser";
-type RightPanelTab = "inspector" | WindowPanelTab;
+type RightPanelTab = "inspector" | "review" | WindowPanelTab;
 
 type LayoutState = {
 	leftWidth: number;
@@ -388,7 +392,7 @@ function isWindowPanelTab(value: unknown): value is WindowPanelTab {
 }
 
 function isRightPanelTab(value: unknown): value is RightPanelTab {
-	return value === "inspector" || isWindowPanelTab(value);
+	return value === "inspector" || value === "review" || isWindowPanelTab(value);
 }
 
 function loadLayoutState(): LayoutState {
@@ -2156,6 +2160,87 @@ function renderGit(status: GitStatus): void {
 	}
 }
 
+function diffScope(): "working-tree" | "staged" | "last-turn" {
+	const value = reviewScopeSelect.value;
+	return value === "staged" || value === "last-turn" ? value : "working-tree";
+}
+
+function renderReview(diff: ParsedDiff): void {
+	reviewContent.replaceChildren();
+	if (diff.files.length === 0) {
+		const empty = document.createElement("div");
+		empty.className = "review-empty";
+		empty.textContent = diffScope() === "staged" ? "No staged changes" : "No changes";
+		reviewContent.append(empty);
+		reviewStats.textContent = "";
+		return;
+	}
+	reviewStats.innerHTML = `<span class="add-count">+${diff.totalAdditions}</span> <span class="del-count">-${diff.totalDeletions}</span>`;
+	for (const file of diff.files) {
+		reviewContent.append(renderDiffFile(file));
+	}
+}
+
+function renderDiffFile(file: DiffFile): HTMLElement {
+	const section = document.createElement("section");
+	section.className = "diff-file";
+	const header = document.createElement("div");
+	header.className = "diff-file-header";
+	const name = document.createElement("span");
+	name.className = "diff-file-name";
+	name.textContent = file.newPath;
+	const stats = document.createElement("span");
+	stats.className = "diff-file-stats";
+	stats.innerHTML = `<span class="add-count">+${file.additions}</span> <span class="del-count">-${file.deletions}</span>`;
+	header.append(name, stats);
+	section.append(header);
+
+	for (const hunk of file.hunks) {
+		const hunkEl = document.createElement("div");
+		hunkEl.className = "diff-hunk";
+		const hunkHeader = document.createElement("div");
+		hunkHeader.className = "diff-hunk-header";
+		hunkHeader.textContent = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@${
+			hunk.header ? ` ${hunk.header}` : ""
+		}`;
+		hunkEl.append(hunkHeader);
+		for (const line of hunk.lines) hunkEl.append(renderDiffLine(line));
+		section.append(hunkEl);
+	}
+
+	return section;
+}
+
+function renderDiffLine(line: DiffLine): HTMLElement {
+	const row = document.createElement("div");
+	row.className = `diff-line ${line.type}`;
+	const oldLine = document.createElement("span");
+	oldLine.className = "diff-line-number";
+	oldLine.textContent = line.oldLine === undefined ? "" : String(line.oldLine);
+	const newLine = document.createElement("span");
+	newLine.className = "diff-line-number";
+	newLine.textContent = line.newLine === undefined ? "" : String(line.newLine);
+	const marker = document.createElement("span");
+	marker.className = "diff-line-marker";
+	marker.textContent = line.type === "add" ? "+" : line.type === "delete" ? "-" : " ";
+	const text = document.createElement("code");
+	text.className = "diff-line-text";
+	text.textContent = line.text || " ";
+	row.append(oldLine, newLine, marker, text);
+	return row;
+}
+
+async function refreshReview(): Promise<void> {
+	reviewContent.innerHTML = '<div class="review-empty">Loading diff...</div>';
+	try {
+		renderReview(await window.piDesktop.getDiff(diffScope(), 3));
+	} catch (error) {
+		reviewStats.textContent = "";
+		reviewContent.innerHTML = '<div class="review-empty">Failed to load diff</div>';
+		showError(error);
+	}
+}
+
 async function refreshModels(): Promise<void> {
 	models = await window.piDesktop.listModels();
 	renderModels();
@@ -2970,6 +3055,8 @@ function syncRightPanelContent(): void {
 		mountTerminal(rightTerminalContainer);
 	} else if (layoutState.rightTab === "browser") {
 		ensureBrowserLoaded(browserUrlInput, browserFrame);
+	} else if (layoutState.rightTab === "review") {
+		refreshReview().catch(showError);
 	}
 }
 
@@ -3359,6 +3446,14 @@ rightResizer.addEventListener("keydown", (event) => {
 
 refreshGitButton.addEventListener("click", () => {
 	refreshGit().catch(showError);
+});
+
+refreshReviewButton.addEventListener("click", () => {
+	refreshReview().catch(showError);
+});
+
+reviewScopeSelect.addEventListener("change", () => {
+	refreshReview().catch(showError);
 });
 
 refreshSessionsButton.addEventListener("click", () => {

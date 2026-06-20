@@ -444,6 +444,139 @@ button:disabled {
 	background: var(--panel);
 }
 
+.review-pane {
+	gap: 0;
+	padding: 0;
+	overflow: hidden;
+}
+
+.review-header {
+	flex: none;
+	padding: 10px;
+	border-bottom: 1px solid var(--line);
+	background: color-mix(in srgb, var(--inspector) 92%, var(--paper));
+}
+
+.review-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.review-scope-select {
+	min-width: 0;
+	height: 30px;
+	padding: 0 8px;
+	border-radius: 7px;
+	border-color: var(--line);
+	background: var(--panel);
+	color: var(--ink);
+	font-size: 12px;
+}
+
+.review-stats {
+	flex: 1;
+	min-width: 0;
+	font: 12px var(--mono-font);
+	color: var(--faint);
+}
+
+.add-count {
+	color: #16a34a;
+}
+
+.del-count {
+	color: #dc2626;
+}
+
+.review-content {
+	min-height: 0;
+	overflow: auto;
+	padding: 10px;
+	font-family: var(--mono-font);
+	font-size: 11.5px;
+	line-height: 1.45;
+}
+
+.review-empty {
+	padding: 20px 4px;
+	color: var(--faint);
+	font-family: var(--ui-font);
+	font-size: 13px;
+}
+
+.diff-file {
+	margin-bottom: 12px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	overflow: hidden;
+}
+
+.diff-file-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 8px 10px;
+	border-bottom: 1px solid var(--line);
+	background: color-mix(in srgb, var(--panel) 88%, var(--paper));
+}
+
+.diff-file-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--ink);
+	font-weight: 650;
+}
+
+.diff-file-stats {
+	flex: none;
+	font-size: 11px;
+}
+
+.diff-hunk-header {
+	padding: 5px 10px;
+	background: color-mix(in srgb, var(--secondary-bg) 70%, transparent);
+	color: var(--faint);
+	overflow-x: auto;
+	white-space: pre;
+}
+
+.diff-line {
+	display: grid;
+	grid-template-columns: 36px 36px 14px minmax(0, 1fr);
+	min-width: max-content;
+}
+
+.diff-line.add {
+	background: color-mix(in srgb, #22c55e 11%, transparent);
+}
+
+.diff-line.delete {
+	background: color-mix(in srgb, #ef4444 10%, transparent);
+}
+
+.diff-line-number {
+	padding: 0 6px;
+	color: var(--faint);
+	text-align: right;
+	user-select: none;
+}
+
+.diff-line-marker {
+	color: var(--muted);
+	user-select: none;
+}
+
+.diff-line-text {
+	padding-right: 10px;
+	color: var(--ink);
+	white-space: pre;
+}
+
 #app.left-collapsed .sidebar,
 #app.right-collapsed .inspector {
 	padding-right: 0;
