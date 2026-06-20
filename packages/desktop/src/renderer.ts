@@ -2595,15 +2595,14 @@ async function abortCurrentRun(): Promise<void> {
 	}
 }
 
-composer.addEventListener("submit", async (event) => {
-	event.preventDefault();
-	if (isComposerBusy) {
-		await abortCurrentRun();
-		return;
-	}
+async function sendCurrentComposer(): Promise<void> {
 	const message = promptInput.value.trim();
 	if (!message && composerImages.length === 0 && composerFiles.length === 0) return;
 	if (message.startsWith("/")) {
+		if (isComposerBusy) {
+			showError("Slash commands cannot be queued.");
+			return;
+		}
 		if (composerImages.length > 0 || composerFiles.length > 0) {
 			showError("Slash commands cannot include attachments.");
 			return;
@@ -2627,8 +2626,17 @@ composer.addEventListener("submit", async (event) => {
 		await refreshSessions();
 	} catch (error) {
 		showError(error);
-		setBusy(false);
+		setBusy(Boolean(state?.isStreaming));
 	}
+}
+
+composer.addEventListener("submit", async (event) => {
+	event.preventDefault();
+	if (isComposerBusy) {
+		await abortCurrentRun();
+		return;
+	}
+	await sendCurrentComposer();
 });
 
 promptInput.addEventListener("keydown", (event) => {
@@ -2652,9 +2660,11 @@ promptInput.addEventListener("keydown", (event) => {
 			}
 		}
 	}
-	if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-		composer.requestSubmit();
+	if (event.key !== "Enter" || event.shiftKey || event.altKey || event.isComposing) {
+		return;
 	}
+	event.preventDefault();
+	sendCurrentComposer().catch(showError);
 });
 
 promptInput.addEventListener("input", () => {
@@ -3296,6 +3306,14 @@ refreshSessionsButton.addEventListener("click", () => {
 
 sessionSearchInput.addEventListener("input", () => {
 	renderSessionList();
+});
+
+sessionSearchInput.addEventListener("keydown", (event) => {
+	if (event.key !== "Escape") return;
+	event.stopPropagation();
+	sessionSearchInput.value = "";
+	renderSessionList();
+	promptInput.focus();
 });
 
 addProjectButton.addEventListener("click", async () => {
