@@ -788,9 +788,67 @@ function renderCurrentUser(user: DesktopCurrentUser | undefined): void {
 	sidebarUserAvatar.append(fallback);
 }
 
+function normalizePhotoUrl(photoUrl: string | undefined, endpoint: string): string | undefined {
+	if (!photoUrl) return undefined;
+	return photoUrl.startsWith("/") ? new URL(photoUrl, endpoint).href : photoUrl;
+}
+
+async function fetchImageDataUrl(url: string, endpoint: string, accessToken: string): Promise<string> {
+	if (!url || url.startsWith("data:")) return url;
+	const imageUrl = new URL(url);
+	const endpointUrl = new URL(endpoint);
+	const headers = imageUrl.origin === endpointUrl.origin ? { Authorization: `Bearer ${accessToken}` } : undefined;
+	const response = await fetch(imageUrl.href, { headers });
+	if (!response.ok) throw new Error(`Avatar fetch failed (${response.status})`);
+	const blob = await response.blob();
+	if (!blob.type.startsWith("image/")) throw new Error(`Avatar response is not an image (${blob.type || "unknown"})`);
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result ?? ""));
+		reader.onerror = () => reject(reader.error);
+		reader.readAsDataURL(blob);
+	});
+}
+
+async function fetchCurrentUserInRenderer(): Promise<DesktopCurrentUser | undefined> {
+	const auth = await window.piDesktop.getGleanAuth();
+	if (!auth?.endpoint || !auth?.accessToken) return undefined;
+	const response = await fetch(`${auth.endpoint}/api/v1/people?clientVersion=desktop-cowork`, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${auth.accessToken}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ includeFields: ["PEOPLE_DETAILS", "PEOPLE_PROFILE_SETTINGS"] }),
+	});
+	if (!response.ok) throw new Error(`User fetch failed (${response.status})`);
+	const result = (await response.json()) as {
+		results?: Array<{ name?: unknown; metadata?: Record<string, unknown> }>;
+	};
+	const person = result.results?.[0];
+	const metadata = person?.metadata ?? {};
+	const rawPhotoUrl =
+		typeof metadata.photoUrl === "string"
+			? metadata.photoUrl
+			: typeof metadata.uneditedPhotoUrl === "string"
+				? metadata.uneditedPhotoUrl
+				: undefined;
+	const photoUrl = normalizePhotoUrl(rawPhotoUrl, auth.endpoint);
+	return {
+		endpoint: auth.endpoint,
+		name:
+			(typeof person?.name === "string" ? person.name : undefined) ??
+			[metadata.firstName, metadata.lastName].filter((value) => typeof value === "string" && value).join(" "),
+		email: typeof metadata.email === "string" ? metadata.email : undefined,
+		photoUrl: photoUrl
+			? await fetchImageDataUrl(photoUrl, auth.endpoint, auth.accessToken).catch(() => photoUrl)
+			: undefined,
+	};
+}
+
 async function refreshCurrentUser(): Promise<void> {
 	try {
-		renderCurrentUser(await window.piDesktop.getCurrentUser());
+		renderCurrentUser(await fetchCurrentUserInRenderer());
 	} catch (error) {
 		console.warn("[desktop] failed to fetch current user", error);
 		renderCurrentUser(undefined);
