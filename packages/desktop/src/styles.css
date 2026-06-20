@@ -1479,7 +1479,7 @@ select:focus {
 .session-item {
 	position: relative;
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) max-content 56px;
+	grid-template-columns: minmax(0, 1fr) max-content;
 	align-items: center;
 	column-gap: 10px;
 	width: 100%;
@@ -1503,7 +1503,7 @@ select:focus {
 
 .session-item-row:hover .session-item,
 .session-item-row.pinned .session-item {
-	grid-template-columns: minmax(0, 1fr) max-content 108px;
+	grid-template-columns: minmax(0, 1fr) max-content 72px;
 }
 
 .session-pagination {
