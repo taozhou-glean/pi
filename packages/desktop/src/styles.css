@@ -3057,6 +3057,71 @@ button.composer-context-item:focus-visible {
 	color: var(--ink);
 }
 
+.model-shortcut-tooltip {
+	position: absolute;
+	right: 0;
+	bottom: calc(100% + 8px);
+	z-index: 80;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px 12px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	box-shadow: 0 4px 16px var(--shadow);
+	white-space: nowrap;
+	opacity: 0;
+	pointer-events: none;
+	transform: translateY(4px);
+	transition:
+		opacity 150ms ease,
+		transform 150ms ease;
+}
+
+.composer-model:hover ~ .model-shortcut-tooltip,
+.model-shortcut-tooltip:hover {
+	opacity: 1;
+	pointer-events: auto;
+	transform: translateY(0);
+	transition-delay: 300ms;
+}
+
+.composer-model[aria-expanded="true"] ~ .model-shortcut-tooltip {
+	opacity: 0;
+	pointer-events: none;
+}
+
+.shortcut-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	color: var(--ink);
+	font-size: 12px;
+}
+
+.shortcut-keys {
+	display: flex;
+	gap: 3px;
+}
+
+.shortcut-keys kbd {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 20px;
+	height: 20px;
+	padding: 0 5px;
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	background: var(--secondary-bg);
+	color: var(--muted);
+	font-family: inherit;
+	font-size: 11px;
+	font-weight: 500;
+}
+
 #app:not(.right-collapsed) #composer-hint {
 	display: none;
 }

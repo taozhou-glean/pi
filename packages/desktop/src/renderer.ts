@@ -2968,11 +2968,28 @@ bottomResizer.addEventListener("pointerdown", (event) => {
 	bottomResizer.addEventListener("pointerup", onUp);
 });
 
-// Cmd+J shortcut
 document.addEventListener("keydown", (event) => {
 	if ((event.metaKey || event.ctrlKey) && event.key === "j") {
 		event.preventDefault();
 		toggleBottomPanel();
+		return;
+	}
+	if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "/") {
+		event.preventDefault();
+		const levels = state?.availableThinkingLevels ?? ["low", "medium", "high", "xhigh"];
+		if (levels.length === 0) return;
+		const current = (state?.thinkingLevel ?? "medium").toLowerCase();
+		const currentIndex = levels.indexOf(current);
+		const next = levels[(currentIndex + 1) % levels.length]!;
+		window.piDesktop.setThinkingLevel(next).then(renderState).catch(showError);
+		return;
+	}
+	if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key === "/") {
+		event.preventDefault();
+		toggleComposerMenu(composerModelButton, composerModelMenu);
+		if (!composerModelMenu.hidden) {
+			composerModelMenu.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+		}
 	}
 });
 
