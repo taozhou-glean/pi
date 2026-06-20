@@ -2549,6 +2549,110 @@ body.resizing-panels {
 	text-decoration: line-through;
 }
 
+.message.change-artifact {
+	gap: 0;
+	overflow: hidden;
+	border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--panel) 64%, transparent);
+}
+
+.change-artifact-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 10px 11px;
+}
+
+.change-artifact-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	color: var(--ink);
+	font-size: 13px;
+	font-weight: 620;
+}
+
+.change-artifact-icon {
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 7px;
+	background: color-mix(in srgb, var(--accent) 18%, transparent);
+	color: var(--accent-strong);
+}
+
+.change-artifact-icon svg {
+	width: 14px;
+	height: 14px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+}
+
+.change-artifact-stats,
+.change-artifact-file-stats {
+	display: inline-flex;
+	gap: 6px;
+	color: var(--faint);
+	font-family: var(--mono-font);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.change-artifact-header > button {
+	padding: 5px 9px;
+	border-radius: 7px;
+	font-size: 12px;
+	font-weight: 560;
+}
+
+.change-artifact-files {
+	border-top: 1px solid var(--line);
+}
+
+.change-artifact-file,
+.change-artifact-more {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	width: 100%;
+	min-height: 32px;
+	padding: 6px 11px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--muted);
+	box-shadow: none;
+	font-size: 12px;
+	text-align: left;
+}
+
+.change-artifact-file + .change-artifact-file,
+.change-artifact-more {
+	border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.change-artifact-file:hover:not(:disabled),
+.change-artifact-more:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.change-artifact-path {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.change-artifact-more {
+	justify-content: center;
+	color: var(--faint);
+}
+
 .markdown > *:first-child {
 	margin-top: 0;
 }

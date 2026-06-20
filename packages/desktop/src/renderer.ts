@@ -1596,6 +1596,68 @@ function renderSessionPlan(messages: DesktopMessage[]): void {
 	messagesEl.append(card);
 }
 
+function openReviewPanel(scope: "working-tree" | "staged" | "last-turn" = "working-tree"): void {
+	reviewScopeSelect.value = scope;
+	layoutState.rightCollapsed = false;
+	layoutState.rightTab = "review";
+	applyLayoutState();
+	saveLayoutState();
+	syncRightPanelContent();
+	refreshReview().catch(showError);
+}
+
+function renderLastTurnArtifact(): void {
+	const diff = state?.lastTurnDiff;
+	if (!diff || diff.files.length === 0 || isComposerBusy) return;
+	const card = document.createElement("article");
+	card.className = "message assistant change-artifact";
+	const header = document.createElement("div");
+	header.className = "change-artifact-header";
+	const title = document.createElement("div");
+	title.className = "change-artifact-title";
+	const icon = document.createElement("span");
+	icon.className = "change-artifact-icon";
+	icon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
+	const copy = document.createElement("span");
+	copy.textContent = `Edited ${diff.files.length} file${diff.files.length === 1 ? "" : "s"}`;
+	const stats = document.createElement("span");
+	stats.className = "change-artifact-stats";
+	stats.innerHTML = `<span class="add-count">+${diff.totalAdditions}</span><span class="del-count">-${diff.totalDeletions}</span>`;
+	title.append(icon, copy, stats);
+	const review = document.createElement("button");
+	review.type = "button";
+	review.textContent = "Review";
+	review.addEventListener("click", () => openReviewPanel("last-turn"));
+	header.append(title, review);
+
+	const files = document.createElement("div");
+	files.className = "change-artifact-files";
+	for (const file of diff.files.slice(0, 4)) {
+		const row = document.createElement("button");
+		row.type = "button";
+		row.className = "change-artifact-file";
+		row.addEventListener("click", () => openReviewPanel("last-turn"));
+		const path = document.createElement("span");
+		path.className = "change-artifact-path";
+		path.textContent = file.newPath;
+		const fileStats = document.createElement("span");
+		fileStats.className = "change-artifact-file-stats";
+		fileStats.innerHTML = `<span class="add-count">+${file.additions}</span><span class="del-count">-${file.deletions}</span>`;
+		row.append(path, fileStats);
+		files.append(row);
+	}
+	if (diff.files.length > 4) {
+		const more = document.createElement("button");
+		more.type = "button";
+		more.className = "change-artifact-more";
+		more.textContent = `Show ${diff.files.length - 4} more file${diff.files.length - 4 === 1 ? "" : "s"}`;
+		more.addEventListener("click", () => openReviewPanel("last-turn"));
+		files.append(more);
+	}
+	card.append(header, files);
+	messagesEl.append(card);
+}
+
 function renderMessages(messages: DesktopMessage[]): void {
 	currentMessages = messages;
 	syncSessionMenu();
@@ -1655,6 +1717,7 @@ function renderMessages(messages: DesktopMessage[]): void {
 		messagesEl.append(row);
 	}
 	renderSessionPlan(messages);
+	renderLastTurnArtifact();
 	const lastMessage = messages.at(-1);
 	const assistantHasContent =
 		lastMessage?.role === "assistant" &&
