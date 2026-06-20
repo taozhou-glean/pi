@@ -291,30 +291,37 @@
 										</div>
 									<div class="composer-permission-wrap">
 										<button
-											id="composer-permission"
+											id="composer-permission-mode"
 											class="composer-menu-trigger composer-permission-mode"
 											type="button"
-											aria-label="Tool permission mode"
+											aria-label="Permission mode"
 											aria-expanded="false"
 											aria-controls="composer-permission-menu"
 										>
 											<svg viewBox="0 0 24 24" aria-hidden="true">
 												<path d="M12 3 5 6v5c0 4.5 2.8 7.6 7 10 4.2-2.4 7-5.5 7-10V6l-7-3Z" />
+												<path d="m9.5 12 1.7 1.7 3.6-4" />
 											</svg>
 											<span id="composer-permission-label">Full access</span>
 										</button>
-										<div id="composer-permission-menu" class="composer-menu permission-menu" hidden>
-											<button type="button" class="permission-menu-item" data-permission-mode="bypassPermissions" role="menuitemradio" aria-checked="true">
-												<span>Full access</span>
-												<small>Run tools without asking.</small>
-											</button>
-											<button type="button" class="permission-menu-item" data-permission-mode="acceptEdits" role="menuitemradio" aria-checked="false">
-												<span>Allow edits</span>
-												<small>Ask before non-edit tools.</small>
-											</button>
-											<button type="button" class="permission-menu-item" data-permission-mode="ask" role="menuitemradio" aria-checked="false">
+										<div
+											id="composer-permission-menu"
+											class="composer-menu permission-menu"
+											role="radiogroup"
+											aria-label="Permission mode"
+											hidden
+										>
+											<button type="button" class="permission-menu-item" data-permission-mode="ask" role="radio">
 												<span>Ask before tools</span>
-												<small>Confirm each tool before it runs.</small>
+												<small>Approve every tool call</small>
+											</button>
+											<button type="button" class="permission-menu-item" data-permission-mode="acceptEdits" role="radio">
+												<span>Allow edits</span>
+												<small>Edits run automatically; other tools ask</small>
+											</button>
+											<button type="button" class="permission-menu-item" data-permission-mode="bypassPermissions" role="radio">
+												<span>Full access</span>
+												<small>Run tools without approval</small>
 											</button>
 										</div>
 									</div>
