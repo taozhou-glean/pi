@@ -17,6 +17,7 @@ const api = {
 	setCwd: (cwd: string) => ipcRenderer.invoke("pi:set-cwd", cwd),
 	listModels: () => ipcRenderer.invoke("pi:list-models"),
 	setModel: (provider: string, id: string) => ipcRenderer.invoke("pi:set-model", provider, id),
+	setThinkingLevel: (level: string) => ipcRenderer.invoke("pi:set-thinking-level", level),
 	compact: (customInstructions?: string) => ipcRenderer.invoke("pi:compact", customInstructions),
 	setSessionName: (name: string) => ipcRenderer.invoke("pi:set-session-name", name),
 	reloadSession: () => ipcRenderer.invoke("pi:reload-session"),

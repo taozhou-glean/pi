@@ -69,6 +69,7 @@ type DesktopState = {
 	sessionName?: string;
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
+	availableThinkingLevels?: string[];
 	authRequired: boolean;
 	availableModelCount: number;
 	isStreaming: boolean;
@@ -432,6 +433,7 @@ function serializeState(): DesktopState {
 		sessionName: session.sessionManager.getSessionName(),
 		model: hasRealModel && model ? { provider: model.provider, id: model.id } : undefined,
 		thinkingLevel: session.thinkingLevel,
+		availableThinkingLevels: session.getAvailableThinkingLevels(),
 		authRequired: availableModelCount === 0,
 		availableModelCount,
 		isStreaming: session.isStreaming,
@@ -1569,6 +1571,11 @@ ipcMain.handle("pi:set-model", async (_event, provider: string, id: string) => {
 	const model = getSession().modelRegistry.find(provider, id);
 	if (!model) throw new Error(`Unknown model: ${provider}/${id}`);
 	await getSession().setModel(model);
+	return serializeState();
+});
+ipcMain.handle("pi:set-thinking-level", async (_event, level: string) => {
+	await ensureDesktopSession();
+	getSession().setThinkingLevel(level as never);
 	return serializeState();
 });
 ipcMain.handle("pi:compact", async (_event, customInstructions?: string) => {

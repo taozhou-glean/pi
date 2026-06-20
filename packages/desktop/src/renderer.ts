@@ -9,6 +9,7 @@ type DesktopState = {
 	sessionName?: string;
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
+	availableThinkingLevels?: string[];
 	authRequired: boolean;
 	availableModelCount: number;
 	isStreaming: boolean;
@@ -124,6 +125,7 @@ type PiDesktopApi = {
 	setCwd(cwd: string): Promise<DesktopState>;
 	listModels(): Promise<DesktopModel[]>;
 	setModel(provider: string, id: string): Promise<DesktopState>;
+	setThinkingLevel(level: string): Promise<DesktopState>;
 	compact(customInstructions?: string): Promise<DesktopState>;
 	setSessionName(name: string): Promise<DesktopState>;
 	reloadSession(): Promise<DesktopState>;
@@ -498,9 +500,25 @@ function shortId(id?: string): string {
 	return id ? id.slice(0, 8) : "-";
 }
 
+function reasoningDisplay(level: string | undefined): string {
+	return (
+		{
+			off: "off",
+			minimal: "minimal",
+			low: "low",
+			medium: "medium",
+			high: "high",
+			xhigh: "extra high",
+			"extra-high": "extra high",
+		}[level ?? "off"] ??
+		level ??
+		"off"
+	);
+}
+
 function modelDisplay(state: DesktopState): string {
 	if (!state.model) return "No model selected";
-	return `${state.model.id} · ${state.thinkingLevel ?? "off"}`;
+	return `${state.model.id} · ${reasoningDisplay(state.thinkingLevel)}`;
 }
 
 function renderComposerContext(git?: GitStatus): void {
@@ -1283,7 +1301,7 @@ function createMessage(message: DesktopMessage): HTMLElement {
 		if (state?.model) {
 			const model = document.createElement("span");
 			model.className = "message-model";
-			model.textContent = `${state.model.id} · ${state.thinkingLevel ?? "off"}`;
+			model.textContent = `${state.model.id} · ${reasoningDisplay(state.thinkingLevel)}`;
 			meta.append(model);
 		}
 		const time = document.createElement("time");
@@ -1661,18 +1679,32 @@ function renderModels(): void {
 	composerModelButton.disabled = false;
 	composerModelMenu.append(createMenuLabel("Reasoning"));
 	const currentThinking = (state?.thinkingLevel ?? "medium").toLowerCase();
+	const availableThinkingLevels = new Set(state?.availableThinkingLevels ?? ["low", "medium", "high", "xhigh"]);
 	for (const [label, value] of [
 		["Low", "low"],
 		["Medium", "medium"],
 		["High", "high"],
-		["Extra High", "extra-high"],
+		["Extra High", "xhigh"],
 	]) {
 		const item = document.createElement("button");
 		item.type = "button";
+		const isAvailable = availableThinkingLevels.has(value);
 		item.className = `model-menu-item reasoning-item ${currentThinking === value ? "active" : ""}`;
-		item.setAttribute("aria-disabled", "true");
-		item.tabIndex = -1;
+		item.dataset.thinkingLevel = value;
+		item.setAttribute("aria-disabled", String(!isAvailable));
+		item.tabIndex = isAvailable ? 0 : -1;
+		item.title = isAvailable ? "" : "This reasoning level is not supported by the current model.";
 		item.innerHTML = `<span>${label}</span>`;
+		item.addEventListener("click", async () => {
+			if (item.getAttribute("aria-disabled") === "true") return;
+			try {
+				closeComposerMenus();
+				renderState(await window.piDesktop.setThinkingLevel(value));
+				promptInput.focus();
+			} catch (error) {
+				showError(error);
+			}
+		});
 		composerModelMenu.append(item);
 	}
 	composerModelMenu.append(createMenuSeparator(), createMenuLabel("Model"));
