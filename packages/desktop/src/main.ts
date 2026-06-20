@@ -20,6 +20,7 @@ import {
 import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions, shell } from "electron";
 import * as pty from "node-pty";
 import { type ParsedDiff, parseUnifiedDiff } from "./diff-parser";
+import { type GithubPullRequestStatus, getGithubPullRequestStatus, githubFailureSignature } from "./github-pr";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -150,6 +151,28 @@ type DesktopState = {
 	todos: DesktopTodo[];
 };
 
+type DesktopGitStatus = {
+	isRepo: boolean;
+	branch?: string;
+	status: string[];
+	diffStat?: string;
+	additions?: number;
+	deletions?: number;
+	error?: string;
+};
+
+type DesktopEnvironmentStatus = {
+	git: DesktopGitStatus;
+	pullRequest: GithubPullRequestStatus;
+	monitoring: boolean;
+};
+
+type DesktopPrMonitor = {
+	timer: NodeJS.Timeout;
+	lastFailureSignature?: string;
+	tickInFlight?: Promise<void>;
+};
+
 type DesktopTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
 type DesktopTodo = {
@@ -221,6 +244,8 @@ const permissionModesBySessionId = new Map<string, DesktopPermissionMode>();
 const permissionGrantsBySessionId = new Map<string, Set<string>>();
 const pendingPermissionsById = new Map<string, PendingDesktopPermission>();
 const permissionTimeoutMs = 5 * 60_000;
+let prMonitor: DesktopPrMonitor | undefined;
+const prMonitorIntervalMs = 60_000;
 let isQuitting = false;
 let pendingSessionSnapshot: NodeJS.Timeout | undefined;
 
@@ -1246,20 +1271,29 @@ async function listDesktopSessions(): Promise<DesktopSessionInfo[]> {
 	return serialized;
 }
 
-async function getGitStatus(): Promise<{
-	isRepo: boolean;
-	branch?: string;
-	status: string[];
-	diffStat?: string;
-	error?: string;
-}> {
+async function getGitStatus(): Promise<DesktopGitStatus> {
 	try {
 		await execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd: currentCwd });
-		const [{ stdout: branchOut }, { stdout: statusOut }, { stdout: diffOut }] = await Promise.all([
-			execFileAsync("git", ["branch", "--show-current"], { cwd: currentCwd }),
-			execFileAsync("git", ["status", "--short"], { cwd: currentCwd }),
-			execFileAsync("git", ["diff", "--stat"], { cwd: currentCwd }),
-		]);
+		const [{ stdout: branchOut }, { stdout: statusOut }, { stdout: diffOut }, { stdout: numStatOut }] =
+			await Promise.all([
+				execFileAsync("git", ["branch", "--show-current"], { cwd: currentCwd }),
+				execFileAsync("git", ["status", "--short"], { cwd: currentCwd }),
+				execFileAsync("git", ["diff", "--stat"], { cwd: currentCwd }),
+				execFileAsync("git", ["diff", "--numstat"], { cwd: currentCwd }),
+			]);
+		const lineChanges = numStatOut
+			.split("\n")
+			.filter(Boolean)
+			.reduce(
+				(total, line) => {
+					const [additions, deletions] = line.split("\t");
+					return {
+						additions: total.additions + (Number(additions) || 0),
+						deletions: total.deletions + (Number(deletions) || 0),
+					};
+				},
+				{ additions: 0, deletions: 0 },
+			);
 		return {
 			isRepo: true,
 			branch: branchOut.trim() || "detached",
@@ -1268,6 +1302,7 @@ async function getGitStatus(): Promise<{
 				.map((line) => line.trimEnd())
 				.filter(Boolean),
 			diffStat: diffOut.trim(),
+			...lineChanges,
 		};
 	} catch (error) {
 		return {
@@ -1276,6 +1311,110 @@ async function getGitStatus(): Promise<{
 			error: error instanceof Error ? error.message : String(error),
 		};
 	}
+}
+
+function prFixPrompt(status: Extract<GithubPullRequestStatus, { kind: "ready" }>): DesktopPromptPayload {
+	const failures = status.checks
+		.filter((check) => check.state === "failed")
+		.map((check) => `- ${check.name}${check.detailsUrl ? `: ${check.detailsUrl}` : ""}`)
+		.join("\n");
+	return {
+		text: [
+			`PR check monitor detected failing checks on #${status.number}: ${status.url}`,
+			"",
+			failures,
+			"",
+			"Use the locally installed gh CLI to inspect the failing run logs and identify the root cause.",
+			"Implement the fixes, run targeted local verification, and summarize the result.",
+			"Follow the workspace instructions for commit and push permissions; do not create a new pull request.",
+		].join("\n"),
+	};
+}
+
+async function getEnvironmentStatus(pullRequest?: GithubPullRequestStatus): Promise<DesktopEnvironmentStatus> {
+	const [git, resolvedPullRequest] = await Promise.all([
+		getGitStatus(),
+		pullRequest ? Promise.resolve(pullRequest) : getGithubPullRequestStatus(currentCwd),
+	]);
+	return {
+		git,
+		pullRequest: resolvedPullRequest,
+		monitoring: Boolean(prMonitor),
+	};
+}
+
+function publishEnvironmentStatus(status: DesktopEnvironmentStatus): void {
+	send("pi:event", { type: "desktop_environment_status", status });
+}
+
+async function runPrMonitorTick(monitor: DesktopPrMonitor): Promise<void> {
+	if (monitor.tickInFlight) return monitor.tickInFlight;
+	monitor.tickInFlight = (async () => {
+		const pullRequest = await getGithubPullRequestStatus(currentCwd);
+		const status = await getEnvironmentStatus(pullRequest);
+		publishEnvironmentStatus(status);
+		const signature = githubFailureSignature(pullRequest);
+		if (!signature) {
+			if (pullRequest.kind === "ready") monitor.lastFailureSignature = undefined;
+			return;
+		}
+		if (
+			signature === monitor.lastFailureSignature ||
+			getSession().isStreaming ||
+			getSession().pendingMessageCount > 0 ||
+			getQueuedPrompts().length > 0
+		) {
+			return;
+		}
+		monitor.lastFailureSignature = signature;
+		try {
+			await submitPrompt(prFixPrompt(pullRequest as Extract<GithubPullRequestStatus, { kind: "ready" }>));
+		} catch (error) {
+			monitor.lastFailureSignature = undefined;
+			throw error;
+		}
+	})()
+		.catch((error) => {
+			const message = error instanceof Error ? error.message : String(error);
+			send("pi:event", { type: "desktop_error", message });
+		})
+		.finally(() => {
+			monitor.tickInFlight = undefined;
+		});
+	return monitor.tickInFlight;
+}
+
+async function setPrMonitor(enabled: boolean): Promise<DesktopEnvironmentStatus> {
+	if (!enabled) {
+		if (prMonitor) clearInterval(prMonitor.timer);
+		prMonitor = undefined;
+		return getEnvironmentStatus();
+	}
+	if (!prMonitor) {
+		prMonitor = {
+			timer: undefined as unknown as NodeJS.Timeout,
+		};
+		prMonitor.timer = setInterval(() => {
+			if (prMonitor) void runPrMonitorTick(prMonitor);
+		}, prMonitorIntervalMs);
+		await runPrMonitorTick(prMonitor);
+	}
+	return getEnvironmentStatus();
+}
+
+async function fixPrChecks(): Promise<DesktopEnvironmentStatus> {
+	const pullRequest = await getGithubPullRequestStatus(currentCwd);
+	if (pullRequest.kind !== "ready") throw new Error(pullRequest.message);
+	if (pullRequest.state.toUpperCase() !== "OPEN") throw new Error("This pull request is not open.");
+	if (pullRequest.failedCount === 0) throw new Error("This pull request has no failing checks.");
+	const prompt = prFixPrompt(pullRequest);
+	if (getSession().isStreaming || getSession().pendingMessageCount > 0) {
+		queuePrompt(prompt);
+	} else {
+		await submitPrompt(prompt);
+	}
+	if (prMonitor) prMonitor.lastFailureSignature = githubFailureSignature(pullRequest);
+	return getEnvironmentStatus(pullRequest);
 }
 
 async function getUntrackedPaths(cwd: string): Promise<string[]> {
@@ -2548,6 +2687,22 @@ ipcMain.handle("pi:git-status", async () => {
 	await ensureDesktopSession();
 	return getGitStatus();
 });
+ipcMain.handle("pi:environment-status", async () => {
+	await ensureDesktopSession();
+	return getEnvironmentStatus();
+});
+ipcMain.handle("pi:set-pr-monitor", async (_event, enabled: boolean) => {
+	await ensureDesktopSession();
+	const status = await setPrMonitor(enabled === true);
+	publishEnvironmentStatus(status);
+	return status;
+});
+ipcMain.handle("pi:fix-pr-checks", async () => {
+	await ensureDesktopSession();
+	const status = await fixPrChecks();
+	publishEnvironmentStatus(status);
+	return status;
+});
 ipcMain.handle("pi:get-diff", async (_event, scope?: DesktopDiffScope, context?: number) =>
 	getDesktopDiff(scope, context),
 );
@@ -2607,6 +2762,10 @@ app.on("activate", async () => {
 
 app.on("before-quit", () => {
 	isQuitting = true;
+	if (prMonitor) {
+		clearInterval(prMonitor.timer);
+		prMonitor = undefined;
+	}
 	if (pendingSessionSnapshot) {
 		clearTimeout(pendingSessionSnapshot);
 		pendingSessionSnapshot = undefined;

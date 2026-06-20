@@ -42,6 +42,9 @@ const api = {
 	logout: () => ipcRenderer.invoke("pi:logout"),
 	quit: () => ipcRenderer.invoke("pi:quit"),
 	gitStatus: () => ipcRenderer.invoke("pi:git-status"),
+	environmentStatus: () => ipcRenderer.invoke("pi:environment-status"),
+	setPrMonitor: (enabled: boolean) => ipcRenderer.invoke("pi:set-pr-monitor", enabled),
+	fixPrChecks: () => ipcRenderer.invoke("pi:fix-pr-checks"),
 	getDiff: (scope?: "working-tree" | "staged" | "last-turn", context?: number) =>
 		ipcRenderer.invoke("pi:get-diff", scope, context),
 	terminalCreate: () => ipcRenderer.invoke("pi:terminal-create"),

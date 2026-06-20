@@ -118,7 +118,45 @@ type GitStatus = {
 	branch?: string;
 	status: string[];
 	diffStat?: string;
+	additions?: number;
+	deletions?: number;
 	error?: string;
+};
+
+type GithubCheckState = "passed" | "pending" | "failed" | "neutral";
+
+type GithubCheck = {
+	completedAt?: string;
+	detailsUrl?: string;
+	name: string;
+	state: GithubCheckState;
+	workflow?: string;
+};
+
+type GithubPullRequestStatus =
+	| { fetchedAt: string; kind: "none" | "unavailable" | "error"; message: string }
+	| {
+			baseRefName: string;
+			checks: GithubCheck[];
+			failedCount: number;
+			fetchedAt: string;
+			headRefName: string;
+			isDraft: boolean;
+			kind: "ready";
+			neutralCount: number;
+			number: number;
+			passedCount: number;
+			pendingCount: number;
+			reviewDecision?: string;
+			state: string;
+			title: string;
+			url: string;
+	  };
+
+type DesktopEnvironmentStatus = {
+	git: GitStatus;
+	pullRequest: GithubPullRequestStatus;
+	monitoring: boolean;
 };
 
 type DiffLine = {
@@ -249,6 +287,9 @@ type PiDesktopApi = {
 	logout(): Promise<DesktopLogoutResult>;
 	quit(): Promise<void>;
 	gitStatus(): Promise<GitStatus>;
+	environmentStatus(): Promise<DesktopEnvironmentStatus>;
+	setPrMonitor(enabled: boolean): Promise<DesktopEnvironmentStatus>;
+	fixPrChecks(): Promise<DesktopEnvironmentStatus>;
 	getDiff(scope?: "working-tree" | "staged" | "last-turn", context?: number): Promise<ParsedDiff>;
 	terminalCreate(): Promise<void>;
 	terminalWrite(data: string): void;
@@ -319,6 +360,8 @@ const themeSelect = document.querySelector<HTMLSelectElement>("#theme-select")!;
 const gitBranch = document.querySelector<HTMLDivElement>("#git-branch")!;
 const gitStatus = document.querySelector<HTMLDivElement>("#git-status")!;
 const refreshGitButton = document.querySelector<HTMLButtonElement>("#refresh-git")!;
+const refreshEnvironmentButton = document.querySelector<HTMLButtonElement>("#refresh-environment")!;
+const environmentContent = document.querySelector<HTMLDivElement>("#environment-content")!;
 const refreshReviewButton = document.querySelector<HTMLButtonElement>("#refresh-review")!;
 const reviewContent = document.querySelector<HTMLDivElement>("#review-content")!;
 const reviewStats = document.querySelector<HTMLSpanElement>("#review-stats")!;
@@ -2403,6 +2446,185 @@ function renderGit(status: GitStatus): void {
 	}
 }
 
+function environmentIcon(kind: "changes" | "local" | "branch" | "commit"): string {
+	if (kind === "changes") {
+		return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>';
+	}
+	if (kind === "local") {
+		return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5"/></svg>';
+	}
+	if (kind === "branch") {
+		return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v12a4 4 0 0 0 4 4h6"/><circle cx="7" cy="4" r="2"/><circle cx="17" cy="20" r="2"/><path d="M15 8h2a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3h-2"/></svg>';
+	}
+	return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h5M16 12h5"/><circle cx="12" cy="12" r="4"/></svg>';
+}
+
+function renderMonitorControl(monitoring: boolean): string {
+	return `<label class="environment-monitor-label">
+		<input id="environment-auto-fix" type="checkbox" ${monitoring ? "checked" : ""} />
+		<span>Auto-fix failing checks</span>
+	</label>`;
+}
+
+function isOpenPullRequest(pullRequest: GithubPullRequestStatus): boolean {
+	return pullRequest.kind === "ready" && pullRequest.state.toUpperCase() === "OPEN";
+}
+
+function pullRequestStateLabel(pullRequest: GithubPullRequestStatus): string {
+	if (pullRequest.kind !== "ready") return "";
+	const prState = pullRequest.state.toUpperCase();
+	if (prState === "MERGED") return "Merged";
+	if (prState === "CLOSED") return "Closed";
+	if (pullRequest.isDraft) return "Draft";
+	return "Open";
+}
+
+function pullRequestStateClass(pullRequest: GithubPullRequestStatus): string {
+	if (pullRequest.kind !== "ready") return "";
+	const prState = pullRequest.state.toUpperCase();
+	if (prState === "MERGED") return "merged";
+	if (prState === "CLOSED") return "closed";
+	if (pullRequest.isDraft) return "draft";
+	return "open";
+}
+
+function draftEnvironmentAction(text: string): void {
+	promptInput.value = text;
+	autosizePrompt();
+	syncSendButtonState();
+	promptInput.focus();
+	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
+}
+
+function renderEnvironment(status: DesktopEnvironmentStatus): void {
+	renderComposerContext(status.git);
+	const pullRequest = status.pullRequest;
+	const git = status.git;
+	const hasFailures = isOpenPullRequest(pullRequest) && pullRequest.kind === "ready" && pullRequest.failedCount > 0;
+	const changes = git.isRepo
+		? `<button id="environment-review-changes" class="environment-row environment-command-row" type="button">
+				<span class="environment-row-icon">${environmentIcon("changes")}</span>
+				<span class="environment-row-label">Changes</span>
+				<span class="environment-change-count"><span class="environment-additions">+${git.additions ?? 0}</span> <span class="environment-deletions">-${git.deletions ?? 0}</span></span>
+			</button>
+			<div class="environment-row">
+				<span class="environment-row-icon">${environmentIcon("local")}</span>
+				<span class="environment-row-label">Local</span>
+				<span>${git.status.length} file${git.status.length === 1 ? "" : "s"}</span>
+			</div>
+			<div class="environment-row">
+				<span class="environment-row-icon">${environmentIcon("branch")}</span>
+				<span class="environment-row-label">${escapeHtml(git.branch || "detached")}</span>
+			</div>
+			<button id="environment-commit-push" class="environment-row environment-command-row" type="button">
+				<span class="environment-row-icon">${environmentIcon("commit")}</span>
+				<span class="environment-row-label">Commit or push</span>
+				<span class="environment-row-caret" aria-hidden="true"></span>
+			</button>`
+		: `<div class="environment-empty">${escapeHtml(git.error || "This workspace is not a Git repository.")}</div>`;
+	let pullRequestSection: string;
+	if (pullRequest.kind === "ready") {
+		const checks = [...pullRequest.checks]
+			.sort(
+				(left, right) =>
+					["failed", "pending", "passed", "neutral"].indexOf(left.state) -
+					["failed", "pending", "passed", "neutral"].indexOf(right.state),
+			)
+			.map((check) => {
+				const label = check.state === "neutral" ? "skipped" : check.state;
+				const tag = check.detailsUrl ? "a" : "div";
+				const href = check.detailsUrl
+					? ` href="${escapeHtml(check.detailsUrl)}" target="_blank" rel="noreferrer"`
+					: "";
+				return `<${tag} class="environment-check"${href}>
+					<span class="environment-check-dot ${check.state}"></span>
+					<span class="environment-check-name" title="${escapeHtml(check.name)}">${escapeHtml(check.name)}</span>
+					<span class="environment-check-state ${check.state}">${label}</span>
+				</${tag}>`;
+			})
+			.join("");
+		const checkState = pullRequest.failedCount > 0 ? "failed" : pullRequest.pendingCount > 0 ? "pending" : "passed";
+		const checkLabel =
+			pullRequest.failedCount > 0
+				? `${pullRequest.failedCount} check${pullRequest.failedCount === 1 ? "" : "s"} failed`
+				: pullRequest.pendingCount > 0
+					? `${pullRequest.pendingCount} check${pullRequest.pendingCount === 1 ? "" : "s"} pending`
+					: "Checks successful";
+		const checkSummary = pullRequest.checks.length
+			? `<details class="environment-check-disclosure">
+					<summary>
+						<span class="environment-check-icon ${checkState}" aria-hidden="true"></span>
+						<span>${checkLabel}</span>
+					</summary>
+					<div class="environment-checks">${checks}</div>
+					<div class="environment-actions">
+						${renderMonitorControl(status.monitoring)}
+						${hasFailures ? '<button id="environment-fix-checks" class="environment-fix-button" type="button">Fix</button>' : ""}
+					</div>
+				</details>`
+			: '<div class="environment-pr-meta">No checks reported yet.</div>';
+		const stateLabel = pullRequestStateLabel(pullRequest);
+		const stateClass = pullRequestStateClass(pullRequest);
+		pullRequestSection = `<a class="environment-row environment-pr-link" href="${escapeHtml(pullRequest.url)}" target="_blank" rel="noreferrer" title="#${pullRequest.number} · ${pullRequest.isDraft ? "Draft" : escapeHtml(pullRequest.state.toLowerCase())} · ${escapeHtml(pullRequest.headRefName)} -> ${escapeHtml(pullRequest.baseRefName)}">
+				<span class="environment-row-icon">${environmentIcon("branch")}</span>
+				<span class="environment-pr-title"><span class="environment-pr-state ${stateClass}">${escapeHtml(stateLabel)}</span><span class="environment-pr-title-text">${escapeHtml(pullRequest.title)}</span></span>
+			</a>
+			<div class="environment-pr-meta"><span class="environment-pr-branch">#${pullRequest.number} · ${escapeHtml(pullRequest.headRefName)} -> ${escapeHtml(pullRequest.baseRefName)}</span></div>
+			${checkSummary}`;
+	} else {
+		const createPullRequest =
+			git.isRepo && pullRequest.kind === "none"
+				? `<button id="environment-create-pr" class="environment-row environment-command-row" type="button">
+						<span class="environment-row-icon">${environmentIcon("branch")}</span>
+						<span class="environment-row-label">Create pull request</span>
+						<span class="environment-row-caret" aria-hidden="true"></span>
+					</button>`
+				: "";
+		pullRequestSection = `<div class="environment-empty">${escapeHtml(pullRequest.message)}</div>
+			${createPullRequest}
+			${pullRequest.kind === "none" ? "" : `<div class="environment-actions">${renderMonitorControl(status.monitoring)}</div>`}`;
+	}
+	environmentContent.innerHTML = `<div class="environment-card">
+		<div class="environment-section">${changes}</div>
+		<div class="environment-section">${pullRequestSection}</div>
+	</div>`;
+	const fixButton = environmentContent.querySelector<HTMLButtonElement>("#environment-fix-checks");
+	fixButton?.addEventListener("click", async () => {
+		fixButton.disabled = true;
+		fixButton.textContent = "Starting fix...";
+		try {
+			renderEnvironment(await window.piDesktop.fixPrChecks());
+		} catch (error) {
+			showError(error);
+			fixButton.disabled = false;
+			fixButton.textContent = "Fix";
+		}
+	});
+	const monitorToggle = environmentContent.querySelector<HTMLInputElement>("#environment-auto-fix");
+	monitorToggle?.addEventListener("change", async () => {
+		monitorToggle.disabled = true;
+		try {
+			renderEnvironment(await window.piDesktop.setPrMonitor(monitorToggle.checked));
+		} catch (error) {
+			showError(error);
+			monitorToggle.disabled = false;
+		}
+	});
+	environmentContent.querySelector("#environment-review-changes")?.addEventListener("click", () => {
+		openReviewPanel("working-tree");
+	});
+	environmentContent.querySelector("#environment-commit-push")?.addEventListener("click", () => {
+		draftEnvironmentAction(
+			"Review the current changes, then commit and push them. Follow the repository instructions and ask before any action that requires approval.",
+		);
+	});
+	environmentContent.querySelector("#environment-create-pr")?.addEventListener("click", () => {
+		draftEnvironmentAction(
+			"Create a pull request for the current branch. Review the changes and repository PR instructions first, and show me the proposed title and description before creating it.",
+		);
+	});
+}
+
 function diffScope(): "working-tree" | "staged" | "last-turn" {
 	const value = reviewScopeSelect.value;
 	return value === "staged" || value === "last-turn" ? value : "working-tree";
@@ -3152,8 +3374,12 @@ async function refreshGit(): Promise<void> {
 	renderGit(await window.piDesktop.gitStatus());
 }
 
+async function refreshEnvironment(): Promise<void> {
+	renderEnvironment(await window.piDesktop.environmentStatus());
+}
+
 async function refreshAfterSessionChange(): Promise<void> {
-	await Promise.all([refreshModels(), refreshSessions(), refreshGit()]);
+	await Promise.all([refreshModels(), refreshSessions(), refreshGit(), refreshEnvironment()]);
 	renderMessages(await window.piDesktop.getMessages());
 }
 
@@ -4384,6 +4610,10 @@ refreshGitButton.addEventListener("click", () => {
 	refreshGit().catch(showError);
 });
 
+refreshEnvironmentButton.addEventListener("click", () => {
+	refreshEnvironment().catch(showError);
+});
+
 refreshReviewButton.addEventListener("click", () => {
 	refreshReview().catch(showError);
 });
@@ -4472,12 +4702,16 @@ window.piDesktop.onState(renderState);
 window.piDesktop.onMessages(renderMessages);
 window.piDesktop.onEvent((event) => {
 	const typed = event as { type?: string } & DesktopToolExecutionEndEvent;
+	if (typed.type === "desktop_environment_status") {
+		const status = (event as { status?: DesktopEnvironmentStatus }).status;
+		if (status) renderEnvironment(status);
+	}
 	if (typed.type === "tool_execution_end" && typed.toolCallId) {
 		completedToolExecutions.set(typed.toolCallId, { isError: typed.isError === true });
 		window.piDesktop.getMessages().then(renderMessages).catch(showError);
 	}
 	if (typed.type === "agent_end") {
-		Promise.all([refreshGit(), refreshSessions()]).catch(showError);
+		Promise.all([refreshGit(), refreshEnvironment(), refreshSessions()]).catch(showError);
 	}
 });
 
