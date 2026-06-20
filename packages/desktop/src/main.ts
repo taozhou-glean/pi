@@ -13,6 +13,7 @@ import {
 	type CreateAgentSessionResult,
 	createAgentSessionFromServices,
 	createAgentSessionServices,
+	type ExtensionFactory,
 	type SessionInfo,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
@@ -84,6 +85,14 @@ type DesktopState = {
 	isStreaming: boolean;
 	pendingMessageCount: number;
 	messageCount: number;
+	todos: DesktopTodo[];
+};
+
+type DesktopTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+type DesktopTodo = {
+	content: string;
+	status: DesktopTodoStatus;
 };
 
 type DesktopLoginResult = {
@@ -137,7 +146,9 @@ const providerAllowlist = ["glean"];
 const envSessionDir = "PI_CODING_AGENT_SESSION_DIR";
 const responseFeedbackEntryType = "cowork_response_feedback";
 const turnDiffEntryType = "cowork_turn_diff";
+const desktopTodoStateEntryType = "cowork_todo_state";
 const turnSnapshotsBySessionId = new Map<string, DesktopTurnSnapshot>();
+const todosBySessionId = new Map<string, DesktopTodo[]>();
 let isQuitting = false;
 let pendingSessionSnapshot: NodeJS.Timeout | undefined;
 
@@ -159,6 +170,9 @@ async function getOrCreateDesktopServices(cwd: string): Promise<AgentSessionServ
 	const creation = createAgentSessionServices({
 		cwd: resolvedCwd,
 		providerAllowlist,
+		resourceLoaderOptions: {
+			extensionFactories: [desktopTodoExtension],
+		},
 	})
 		.then((services) => {
 			if (isQuitting) {
@@ -384,6 +398,96 @@ function hydrateLastTurnDiff(session: AgentSession): void {
 	}
 }
 
+function normalizeDesktopTodos(value: unknown): DesktopTodo[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter(
+			(item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item),
+		)
+		.map((item) => {
+			const content = String(item.content ?? item.title ?? item.text ?? "").trim();
+			const rawStatus = typeof item.status === "string" ? item.status.toLowerCase() : "pending";
+			const status: DesktopTodoStatus = ["pending", "in_progress", "completed", "cancelled"].includes(rawStatus)
+				? (rawStatus as DesktopTodoStatus)
+				: "pending";
+			return { content, status };
+		})
+		.filter((item) => item.content.length > 0);
+}
+
+function hydrateDesktopTodos(session: AgentSession): void {
+	let todos: DesktopTodo[] = [];
+	for (const entry of session.sessionManager.getBranch()) {
+		if (entry.type !== "custom" || entry.customType !== desktopTodoStateEntryType) continue;
+		const data = entry.data as { todos?: unknown } | undefined;
+		todos = normalizeDesktopTodos(data?.todos);
+	}
+	todosBySessionId.set(session.sessionId, todos);
+}
+
+const todoParametersSchema = {
+	type: "object",
+	properties: {
+		todos: {
+			type: "array",
+			items: {
+				type: "object",
+				properties: {
+					content: { type: "string", description: "Todo item text" },
+					status: { type: "string", description: "One of pending, in_progress, completed, cancelled" },
+				},
+				required: ["content", "status"],
+			},
+		},
+	},
+	required: ["todos"],
+} as never;
+
+const emptyParametersSchema = {
+	type: "object",
+	properties: {},
+} as never;
+
+const desktopTodoExtension: ExtensionFactory = (pi) => {
+	pi.registerTool({
+		name: "todoread",
+		label: "TodoRead",
+		description: "Read the current task plan.",
+		promptSnippet: "Read the current task plan.",
+		parameters: emptyParametersSchema,
+		async execute(_toolCallId, _params, _signal, _onUpdate, context) {
+			const todos = todosBySessionId.get(context.sessionManager.getSessionId()) ?? [];
+			const text = todos.length
+				? todos.map((todo, index) => `${index + 1}. [${todo.status}] ${todo.content}`).join("\n")
+				: "No todos";
+			return { content: [{ type: "text", text }], details: { todos } };
+		},
+	});
+
+	pi.registerTool({
+		name: "todowrite",
+		label: "TodoWrite",
+		description: "Replace the visible task plan. Send the full ordered list every time.",
+		promptSnippet: "Publish and update a visible task plan.",
+		promptGuidelines: [
+			"For multi-step work, use todowrite to publish the current plan and keep item status current.",
+			"Use todoread before resuming work when the current plan is unclear.",
+		],
+		parameters: todoParametersSchema,
+		async execute(_toolCallId, params, _signal, _onUpdate, context) {
+			const todos = normalizeDesktopTodos((params as { todos?: unknown }).todos);
+			const sessionId = context.sessionManager.getSessionId();
+			todosBySessionId.set(sessionId, todos);
+			pi.appendEntry(desktopTodoStateEntryType, { todos });
+			const completed = todos.filter((todo) => todo.status === "completed").length;
+			return {
+				content: [{ type: "text", text: `Plan updated: ${completed}/${todos.length} complete.` }],
+				details: { todos },
+			};
+		},
+	});
+};
+
 function serializeSessionInfo(session: SessionInfo): DesktopSessionInfo {
 	return {
 		path: session.path,
@@ -535,6 +639,7 @@ function serializeState(): DesktopState {
 		isStreaming: session.isStreaming,
 		pendingMessageCount: session.pendingMessageCount,
 		messageCount: session.messages.length,
+		todos: todosBySessionId.get(session.sessionId) ?? [],
 	};
 }
 
@@ -660,6 +765,7 @@ async function createDesktopSessionInner(
 		sessionStartEvent: { type: "session_start", reason: "startup" },
 	});
 	hydrateLastTurnDiff(current.session);
+	hydrateDesktopTodos(current.session);
 	unsubscribeSession = current.session.subscribe(handleSessionEvent);
 	flushSessionSnapshot();
 	return serializeState();

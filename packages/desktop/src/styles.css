@@ -2450,6 +2450,105 @@ body.resizing-panels {
 	}
 }
 
+.message.session-plan {
+	margin-top: 4px;
+	border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--panel) 58%, transparent);
+}
+
+.session-plan details > summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 38px;
+	padding: 7px 11px;
+	color: var(--muted);
+	cursor: pointer;
+	list-style: none;
+}
+
+.session-plan details > summary::-webkit-details-marker {
+	display: none;
+}
+
+.session-plan details > summary::before {
+	width: 6px;
+	height: 6px;
+	border-right: 1.5px solid currentColor;
+	border-bottom: 1.5px solid currentColor;
+	content: "";
+	transform: rotate(-45deg);
+	transition: transform 120ms ease;
+}
+
+.session-plan details[open] > summary::before {
+	transform: rotate(45deg);
+}
+
+.session-plan-title {
+	color: var(--ink);
+	font-size: 12px;
+	font-weight: 620;
+}
+
+.session-plan-progress {
+	margin-left: auto;
+	color: var(--faint);
+	font-size: 11px;
+}
+
+.session-plan-items {
+	display: grid;
+	gap: 7px;
+	margin: 0;
+	padding: 9px 12px 11px;
+	border-top: 1px solid var(--line);
+	list-style: none;
+}
+
+.session-plan-item {
+	display: grid;
+	grid-template-columns: 12px minmax(0, 1fr);
+	align-items: start;
+	gap: 8px;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.session-plan-marker {
+	width: 8px;
+	height: 8px;
+	margin-top: 4px;
+	border: 1.5px solid var(--faint);
+	border-radius: 50%;
+}
+
+.session-plan-item.in_progress {
+	color: var(--ink);
+}
+
+.session-plan-item.in_progress .session-plan-marker {
+	border-color: var(--warning);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.session-plan-item.completed,
+.session-plan-item.cancelled {
+	color: var(--faint);
+}
+
+.session-plan-item.completed .session-plan-marker {
+	border-color: #2ca56c;
+	background: #2ca56c;
+	box-shadow: 0 0 0 2px color-mix(in srgb, #2ca56c 15%, transparent);
+}
+
+.session-plan-item.cancelled > span:last-child {
+	text-decoration: line-through;
+}
+
 .markdown > *:first-child {
 	margin-top: 0;
 }

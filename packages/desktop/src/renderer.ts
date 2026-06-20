@@ -21,6 +21,14 @@ type DesktopState = {
 	isStreaming: boolean;
 	pendingMessageCount: number;
 	messageCount: number;
+	todos: DesktopTodo[];
+};
+
+type DesktopTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+type DesktopTodo = {
+	content: string;
+	status: DesktopTodoStatus;
 };
 
 type DesktopMessage = {
@@ -1525,6 +1533,69 @@ function createToolGroup(
 	return details;
 }
 
+function normalizePlanItems(value: unknown): DesktopTodo[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter(
+			(item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item),
+		)
+		.map((item) => {
+			const content = String(item.content ?? item.title ?? item.text ?? "").trim();
+			const rawStatus = typeof item.status === "string" ? item.status.toLowerCase() : "pending";
+			const status: DesktopTodoStatus = ["pending", "in_progress", "completed", "cancelled"].includes(rawStatus)
+				? (rawStatus as DesktopTodoStatus)
+				: "pending";
+			return { content, status };
+		})
+		.filter((item) => item.content.length > 0);
+}
+
+function latestPlanItems(messages: DesktopMessage[]): DesktopTodo[] | undefined {
+	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
+		const calls = messages[messageIndex]?.toolCalls ?? [];
+		for (let callIndex = calls.length - 1; callIndex >= 0; callIndex--) {
+			const call = calls[callIndex]!;
+			if (call.name.toLowerCase() !== "todowrite") continue;
+			return normalizePlanItems((call.input as { todos?: unknown } | undefined)?.todos);
+		}
+	}
+	return undefined;
+}
+
+function renderSessionPlan(messages: DesktopMessage[]): void {
+	const items = Array.isArray(state?.todos) ? normalizePlanItems(state.todos) : latestPlanItems(messages);
+	if (!items || items.length === 0) return;
+	const completed = items.filter((item) => item.status === "completed").length;
+	const card = document.createElement("article");
+	card.className = "message assistant session-plan";
+	const details = document.createElement("details");
+	details.open = isComposerBusy || completed < items.length;
+	const summary = document.createElement("summary");
+	const title = document.createElement("span");
+	title.className = "session-plan-title";
+	title.textContent = "Plan";
+	const progress = document.createElement("span");
+	progress.className = "session-plan-progress";
+	progress.textContent = `${completed}/${items.length} completed`;
+	summary.append(title, progress);
+	const list = document.createElement("ol");
+	list.className = "session-plan-items";
+	for (const item of items) {
+		const row = document.createElement("li");
+		row.className = `session-plan-item ${item.status}`;
+		const marker = document.createElement("span");
+		marker.className = "session-plan-marker";
+		marker.setAttribute("aria-hidden", "true");
+		const text = document.createElement("span");
+		text.textContent = item.content;
+		row.append(marker, text);
+		list.append(row);
+	}
+	details.append(summary, list);
+	card.append(details);
+	messagesEl.append(card);
+}
+
 function renderMessages(messages: DesktopMessage[]): void {
 	currentMessages = messages;
 	syncSessionMenu();
@@ -1583,6 +1654,7 @@ function renderMessages(messages: DesktopMessage[]): void {
 		}
 		messagesEl.append(row);
 	}
+	renderSessionPlan(messages);
 	const lastMessage = messages.at(-1);
 	const assistantHasContent =
 		lastMessage?.role === "assistant" &&
