@@ -1691,6 +1691,46 @@ select:focus {
 	font-size: 11px;
 }
 
+.session-recovery-error {
+	display: grid;
+	gap: 4px;
+	margin: 4px 0 8px;
+	padding: 9px 10px;
+	border: 1px solid color-mix(in srgb, #d95656 45%, var(--nav-control-border));
+	border-radius: 8px;
+	background: color-mix(in srgb, #d95656 8%, var(--nav-control-bg));
+	color: var(--nav-text);
+}
+
+.session-recovery-error strong {
+	font-size: 12px;
+}
+
+.session-recovery-error > span {
+	overflow: hidden;
+	color: var(--nav-muted);
+	font-size: 11px;
+	line-height: 1.35;
+	text-overflow: ellipsis;
+}
+
+.session-recovery-error > div {
+	display: flex;
+	gap: 10px;
+	margin-top: 3px;
+}
+
+.session-recovery-error button {
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--nav-text);
+	font-size: 11px;
+	font-weight: 620;
+	box-shadow: none;
+}
+
 .settings-panel {
 	flex: 0 0 auto;
 	padding-bottom: 2px;

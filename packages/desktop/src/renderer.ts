@@ -136,6 +136,18 @@ type SessionNotice = {
 	status: SessionNoticeStatus;
 };
 
+type SessionRecoveryError = {
+	path: string;
+	message: string;
+};
+
+type DesktopSessionStatusEvent = {
+	type: "desktop_session_status";
+	path?: string;
+	id?: string;
+	isRunning: boolean;
+};
+
 type GitStatus = {
 	isRepo: boolean;
 	branch?: string;
@@ -527,6 +539,7 @@ let renderedMessageCount = 0;
 let selectedSlashCommandIndex = 0;
 let isComposerBusy = false;
 let isAbortingRun = false;
+let sessionRecoveryError: SessionRecoveryError | undefined;
 const messagePageSize = 120;
 const projectSessionPageSize = 5;
 const projectSessionLimits = new Map<string, number>();
@@ -2895,6 +2908,21 @@ function setSessionStatus(session: DesktopSessionInfo | undefined, status: Sessi
 	}
 }
 
+function updateSessionRunningStatus(status: DesktopSessionStatusEvent): void {
+	const session = sessions.find((candidate) => candidate.path === status.path || candidate.id === status.id);
+	if (!session) return;
+	session.isRunning = status.isRunning;
+	if (status.isRunning) {
+		setSessionStatus(session, "running");
+	} else if (session.id !== state?.sessionId) {
+		setSessionStatus(session, "finished");
+	} else {
+		setSessionStatus(session, undefined);
+		markSessionRead(session);
+	}
+	renderSessionList();
+}
+
 function setSessionPinned(session: DesktopSessionInfo | undefined, pinned: boolean): void {
 	const key = sessionStorageKey(session);
 	if (!key) return;
@@ -3058,6 +3086,7 @@ function renderModels(): void {
 
 function renderSessionList(): void {
 	sessionList.innerHTML = "";
+	renderSessionRecoveryError();
 	if (sessions.length === 0) {
 		const empty = document.createElement("div");
 		empty.className = "session-empty";
@@ -3213,6 +3242,33 @@ function renderSessionList(): void {
 		}
 	}
 	syncSessionMenu();
+}
+
+function renderSessionRecoveryError(): void {
+	if (!sessionRecoveryError) return;
+	const card = document.createElement("div");
+	card.className = "session-recovery-error";
+	const title = document.createElement("strong");
+	title.textContent = "Could not restore chat";
+	const message = document.createElement("span");
+	message.textContent = sessionRecoveryError.message;
+	const actions = document.createElement("div");
+	const retry = document.createElement("button");
+	retry.type = "button";
+	retry.textContent = "Retry";
+	retry.addEventListener("click", () => {
+		if (sessionRecoveryError) switchToSession(sessionRecoveryError.path).catch(showError);
+	});
+	const dismiss = document.createElement("button");
+	dismiss.type = "button";
+	dismiss.textContent = "Dismiss";
+	dismiss.addEventListener("click", () => {
+		sessionRecoveryError = undefined;
+		renderSessionList();
+	});
+	actions.append(retry, dismiss);
+	card.append(title, message, actions);
+	sessionList.append(card);
 }
 
 function createSessionListItem(session: DesktopSessionInfo, options: { archived?: boolean } = {}): HTMLElement {
@@ -4309,8 +4365,11 @@ async function startNewSession(): Promise<void> {
 
 async function switchToSession(sessionPath: string): Promise<void> {
 	if (switchingSessionPath) return;
+	const nextSession = sessions.find((session) => session.path === sessionPath);
+	setSessionStatus(nextSession, undefined);
 	if (sessionPath === state?.sessionFile) {
 		focusComposer();
+		renderSessionList();
 		return;
 	}
 	switchingSessionPath = sessionPath;
@@ -4318,6 +4377,7 @@ async function switchToSession(sessionPath: string): Promise<void> {
 	renderSessionList();
 	try {
 		renderState(await window.piDesktop.switchSession(sessionPath));
+		sessionRecoveryError = undefined;
 		switchingSessionPath = undefined;
 		renderSessionList();
 		renderMessages(await window.piDesktop.getMessages());
@@ -4325,6 +4385,12 @@ async function switchToSession(sessionPath: string): Promise<void> {
 		focusComposer();
 		refreshModels().catch(showError);
 		refreshGit().catch(showError);
+	} catch (error) {
+		sessionRecoveryError = {
+			path: sessionPath,
+			message: error instanceof Error ? error.message : String(error),
+		};
+		renderSessionList();
 	} finally {
 		switchingSessionPath = undefined;
 		renderSessionList();
@@ -5783,6 +5849,9 @@ window.piDesktop.onMessages(renderMessages);
 window.piDesktop.onEnvironmentStatus(renderEnvironment);
 window.piDesktop.onEvent((event) => {
 	const typed = event as { type?: string; aborted?: boolean; errorMessage?: string } & DesktopToolExecutionEndEvent;
+	if (typed.type === "desktop_session_status") {
+		updateSessionRunningStatus(event as DesktopSessionStatusEvent);
+	}
 	if (typed.type === "desktop_environment_status") {
 		const status = (event as { status?: DesktopEnvironmentStatus }).status;
 		if (status) renderEnvironment(status);
