@@ -19,8 +19,20 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions, shell } from "electron";
 import * as pty from "node-pty";
+import { parsePiDesktopSessionDeepLink, piDesktopSessionDeepLink } from "./deep-link";
 import { type ParsedDiff, parseUnifiedDiff } from "./diff-parser";
 import { type GithubPullRequestStatus, getGithubPullRequestStatus, githubFailureSignature } from "./github-pr";
+import {
+	latestTurnDiff,
+	persistedMessageEntryIds,
+	type QueuedPromptEntry,
+	queuedPromptEntryType,
+	type ResponseFeedbackRating,
+	replayQueuedPrompts,
+	replayResponseFeedback,
+	responseFeedbackEntryType,
+	turnDiffEntryType,
+} from "./session-persistence";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -185,8 +197,6 @@ type DesktopLoginResult = {
 	message: string;
 };
 
-type ResponseFeedbackRating = "positive" | "negative";
-
 type DesktopCurrentUser = {
 	name?: string;
 	email?: string;
@@ -230,9 +240,6 @@ let currentCwd = resolve(process.env.PI_DESKTOP_CWD || process.cwd());
 let currentSessionDir: string | undefined;
 const providerAllowlist = ["glean"];
 const envSessionDir = "PI_CODING_AGENT_SESSION_DIR";
-const responseFeedbackEntryType = "cowork_response_feedback";
-const queuedPromptEntryType = "cowork_queued_prompt";
-const turnDiffEntryType = "cowork_turn_diff";
 const desktopPermissionStateEntryType = "cowork_permission_state";
 const desktopTodoStateEntryType = "cowork_todo_state";
 const turnSnapshotsBySessionId = new Map<string, DesktopTurnSnapshot>();
@@ -250,6 +257,8 @@ const prMonitorIntervalMs = 60_000;
 let focusedTerminalId: string | undefined;
 let isQuitting = false;
 let pendingSessionSnapshot: NodeJS.Timeout | undefined;
+let didRegisterProtocolHandler = false;
+const pendingDeepLinkUrls: string[] = [];
 
 function getSession(): AgentSession {
 	if (!current?.session) {
@@ -429,12 +438,7 @@ function serializeVisibleMessages(): DesktopMessage[] {
 	if (streamingMessage && !messages.includes(streamingMessage)) {
 		messages.push(streamingMessage);
 	}
-	const entryIdsByMessage = new WeakMap<object, string>();
-	for (const entry of session.sessionManager.getBranch()) {
-		if (entry.type === "message" && typeof entry.message === "object" && entry.message !== null) {
-			entryIdsByMessage.set(entry.message, entry.id);
-		}
-	}
+	const entryIdsByMessage = persistedMessageEntryIds(session.sessionManager.getBranch());
 	const feedbackByEntryId = replayResponseFeedback(session.sessionManager.getBranch());
 	return messages.map((message) => {
 		const entryId = typeof message === "object" && message !== null ? entryIdsByMessage.get(message) : undefined;
@@ -442,57 +446,8 @@ function serializeVisibleMessages(): DesktopMessage[] {
 	});
 }
 
-function replayResponseFeedback(
-	entries: ReturnType<SessionManager["getBranch"]>,
-): Record<string, ResponseFeedbackRating> {
-	const feedback: Record<string, ResponseFeedbackRating> = {};
-	for (const entry of entries) {
-		if (entry.type !== "custom" || entry.customType !== responseFeedbackEntryType) continue;
-		const data = entry.data as { entryId?: unknown; rating?: unknown } | undefined;
-		if (typeof data?.entryId !== "string" || !data.entryId) continue;
-		if (data.rating === null) {
-			delete feedback[data.entryId];
-		} else if (data.rating === "positive" || data.rating === "negative") {
-			feedback[data.entryId] = data.rating;
-		}
-	}
-	return feedback;
-}
-
 function sessionQueueKey(session: AgentSession): string {
 	return session.sessionFile ? resolve(session.sessionFile) : session.sessionId;
-}
-
-function isDesktopPromptImage(value: unknown): value is DesktopPromptImage {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-	const image = value as Partial<DesktopPromptImage>;
-	return image.type === "image" && typeof image.data === "string" && typeof image.mimeType === "string";
-}
-
-function isDesktopQueuedPrompt(value: unknown): value is DesktopQueuedPrompt {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-	const prompt = value as Partial<DesktopQueuedPrompt>;
-	return (
-		typeof prompt.id === "string" &&
-		typeof prompt.text === "string" &&
-		typeof prompt.createdAt === "number" &&
-		(prompt.images === undefined || (Array.isArray(prompt.images) && prompt.images.every(isDesktopPromptImage)))
-	);
-}
-
-function replayQueuedPrompts(entries: ReturnType<SessionManager["getBranch"]>): DesktopQueuedPrompt[] {
-	const prompts: DesktopQueuedPrompt[] = [];
-	for (const entry of entries) {
-		if (entry.type !== "custom" || entry.customType !== queuedPromptEntryType) continue;
-		const data = entry.data as { action?: unknown; prompt?: unknown; id?: unknown } | undefined;
-		if (data?.action === "enqueue" && isDesktopQueuedPrompt(data.prompt)) {
-			prompts.push(data.prompt);
-		} else if (data?.action === "remove" && typeof data.id === "string") {
-			const index = prompts.findIndex((prompt) => prompt.id === data.id);
-			if (index !== -1) prompts.splice(index, 1);
-		}
-	}
-	return prompts;
 }
 
 function hydrateQueuedPrompts(session: AgentSession): void {
@@ -518,9 +473,7 @@ function summarizeQueuedPrompts(session = getSession()): DesktopQueuedPromptSumm
 	}));
 }
 
-function persistQueuedPromptEntry(
-	entry: { action: "enqueue"; prompt: DesktopQueuedPrompt } | { action: "remove"; id: string },
-): void {
+function persistQueuedPromptEntry(entry: QueuedPromptEntry): void {
 	getSession().sessionManager.appendCustomEntry(queuedPromptEntryType, entry);
 }
 
@@ -659,35 +612,6 @@ function resolvePermissionRequest(id: string, reply: DesktopPermissionReply): bo
 	}
 	settlePermissionRequest(request, reply);
 	return true;
-}
-
-function isParsedDiff(value: unknown): value is ParsedDiff {
-	if (!value || typeof value !== "object") return false;
-	const candidate = value as Partial<ParsedDiff>;
-	return (
-		Array.isArray(candidate.files) &&
-		candidate.files.every(
-			(file) =>
-				Boolean(file) &&
-				typeof file === "object" &&
-				typeof (file as { newPath?: unknown }).newPath === "string" &&
-				typeof (file as { oldPath?: unknown }).oldPath === "string" &&
-				typeof (file as { additions?: unknown }).additions === "number" &&
-				typeof (file as { deletions?: unknown }).deletions === "number" &&
-				Array.isArray((file as { hunks?: unknown }).hunks),
-		) &&
-		typeof candidate.totalAdditions === "number" &&
-		typeof candidate.totalDeletions === "number"
-	);
-}
-
-function latestTurnDiff(entries: ReturnType<SessionManager["getBranch"]>): ParsedDiff | undefined {
-	let latest: ParsedDiff | undefined;
-	for (const entry of entries) {
-		if (entry.type !== "custom" || entry.customType !== turnDiffEntryType) continue;
-		if (isParsedDiff(entry.data)) latest = entry.data;
-	}
-	return latest;
 }
 
 function hydrateLastTurnDiff(session: AgentSession): void {
@@ -1316,6 +1240,82 @@ async function listDesktopSessions(): Promise<DesktopSessionInfo[]> {
 	}
 	warmDesktopServices(serialized.map((entry) => entry.cwd));
 	return serialized;
+}
+
+async function findDesktopSessionById(sessionId: string): Promise<DesktopSessionInfo | undefined> {
+	await ensureDesktopSession();
+	if (current?.session.sessionId === sessionId) {
+		const session = current.session;
+		return {
+			path: session.sessionFile ?? session.sessionId,
+			id: session.sessionId,
+			name: session.sessionManager.getSessionName(),
+			cwd: currentCwd,
+			modified: new Date().toISOString(),
+			messageCount: session.messages.length,
+			firstMessage: "Current session",
+			isRunning: isSessionRunning(session),
+		};
+	}
+	const configuredSessions = await SessionManager.listAll(currentSessionDir);
+	const configuredMatch = configuredSessions.find((session) => session.id === sessionId);
+	if (configuredMatch) return serializeSessionInfo(configuredMatch);
+	if (!currentSessionDir) return undefined;
+	const defaultMatch = (await SessionManager.listAll()).find((session) => session.id === sessionId);
+	return defaultMatch ? serializeSessionInfo(defaultMatch) : undefined;
+}
+
+async function showPiDesktopSession(sessionId: string): Promise<void> {
+	await ensureDesktopSession();
+	if (current?.session.sessionId !== sessionId) {
+		const session = await findDesktopSessionById(sessionId);
+		if (!session || !session.path) throw new Error(`Pi Desktop chat ${sessionId} was not found on this device.`);
+		await createDesktopSession({ sessionPath: session.path });
+	}
+	if (!mainWindow || mainWindow.isDestroyed()) {
+		await createWindow();
+	} else {
+		mainWindow.show();
+		mainWindow.focus();
+	}
+	publishState();
+}
+
+function openPiDesktopSessionLink(url: string): boolean {
+	const sessionId = parsePiDesktopSessionDeepLink(url);
+	if (!sessionId) return false;
+	if (!app.isReady()) {
+		pendingDeepLinkUrls.push(url);
+		return true;
+	}
+	void showPiDesktopSession(sessionId).catch((error) => {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error("Failed to open Pi Desktop session link", message);
+		if (mainWindow && !mainWindow.isDestroyed()) {
+			send("pi:event", { type: "desktop_error", message });
+		}
+	});
+	return true;
+}
+
+function drainPendingDeepLinks(): void {
+	for (const url of pendingDeepLinkUrls.splice(0)) {
+		openPiDesktopSessionLink(url);
+	}
+}
+
+function registerPiDesktopProtocolHandler(): void {
+	if (didRegisterProtocolHandler) return;
+	didRegisterProtocolHandler = true;
+	app.setAsDefaultProtocolClient("pi");
+	app.on("open-url", (event, url) => {
+		if (openPiDesktopSessionLink(url)) event.preventDefault();
+	});
+	app.on("second-instance", (_event, argv) => {
+		for (const value of argv) {
+			if (openPiDesktopSessionLink(value)) break;
+		}
+	});
 }
 
 async function getGitStatus(): Promise<DesktopGitStatus> {
@@ -2518,7 +2518,7 @@ ipcMain.handle("pi:show-item-in-folder", (_event, filePath: string) => {
 });
 ipcMain.handle("pi:get-session-deep-link", async () => {
 	await ensureDesktopSession();
-	return `pi://session/${encodeURIComponent(getSession().sessionId)}`;
+	return piDesktopSessionDeepLink(getSession().sessionId);
 });
 ipcMain.handle("pi:list-sessions", async () => {
 	await ensureDesktopSession();
@@ -2858,12 +2858,22 @@ ipcMain.on("pi:terminal-destroy-all", () => {
 	destroyTerminals();
 });
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+	app.quit();
+}
+registerPiDesktopProtocolHandler();
+for (const value of process.argv) {
+	openPiDesktopSessionLink(value);
+}
+
 app.whenReady().then(async () => {
 	installApplicationMenu();
 	await createDesktopSession();
 	await createWindow();
 	app.focus({ steal: true });
 	publishState();
+	drainPendingDeepLinks();
 });
 
 app.on("window-all-closed", () => {
