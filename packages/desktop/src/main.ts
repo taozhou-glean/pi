@@ -66,6 +66,26 @@ type DesktopQueuedPromptSummary = {
 	createdAt: number;
 };
 
+type DesktopClarificationRequest = {
+	id: string;
+	sessionId: string;
+	question: string;
+	options: string[];
+	createdAt: number;
+};
+
+type DesktopClarificationResolution = {
+	answer?: string;
+	reason: "answered" | "rejected" | "timeout" | "aborted";
+};
+
+type PendingDesktopClarification = DesktopClarificationRequest & {
+	resolve: (resolution: DesktopClarificationResolution) => void;
+	timer: NodeJS.Timeout;
+	abortSignal?: AbortSignal;
+	abortHandler?: () => void;
+};
+
 type DesktopContextSelection =
 	| { type: "path"; path: string; name: string }
 	| { type: "image"; path: string; name: string; data: string; mimeType: string };
@@ -97,6 +117,7 @@ type DesktopState = {
 	isStreaming: boolean;
 	pendingMessageCount: number;
 	queuedPrompts: DesktopQueuedPromptSummary[];
+	clarificationRequests: DesktopClarificationRequest[];
 	messageCount: number;
 	todos: DesktopTodo[];
 };
@@ -165,6 +186,8 @@ const turnSnapshotsBySessionId = new Map<string, DesktopTurnSnapshot>();
 const todosBySessionId = new Map<string, DesktopTodo[]>();
 const queuedPromptsBySessionKey = new Map<string, DesktopQueuedPrompt[]>();
 const queuedPromptDrains = new Set<string>();
+const pendingClarificationsById = new Map<string, PendingDesktopClarification>();
+const clarificationTimeoutMs = 5 * 60_000;
 let isQuitting = false;
 let pendingSessionSnapshot: NodeJS.Timeout | undefined;
 
@@ -187,7 +210,7 @@ async function getOrCreateDesktopServices(cwd: string): Promise<AgentSessionServ
 		cwd: resolvedCwd,
 		providerAllowlist,
 		resourceLoaderOptions: {
-			extensionFactories: [desktopTodoExtension],
+			extensionFactories: [desktopTodoExtension, desktopClarificationExtension],
 		},
 	})
 		.then((services) => {
@@ -470,6 +493,38 @@ function removeQueuedPrompt(id: string): DesktopQueuedPrompt | undefined {
 	return queuedPrompt;
 }
 
+function clarificationRequestsForSession(sessionId: string): DesktopClarificationRequest[] {
+	return Array.from(pendingClarificationsById.values())
+		.filter((request) => request.sessionId === sessionId)
+		.map((request) => ({
+			id: request.id,
+			sessionId: request.sessionId,
+			question: request.question,
+			options: request.options,
+			createdAt: request.createdAt,
+		}));
+}
+
+function settleClarificationRequest(
+	request: PendingDesktopClarification,
+	resolution: DesktopClarificationResolution,
+): void {
+	clearTimeout(request.timer);
+	if (request.abortSignal && request.abortHandler) {
+		request.abortSignal.removeEventListener("abort", request.abortHandler);
+	}
+	pendingClarificationsById.delete(request.id);
+	request.resolve(resolution);
+	if (current?.session.sessionId === request.sessionId) publishState();
+}
+
+function resolveClarificationRequest(id: string, resolution: DesktopClarificationResolution): boolean {
+	const request = pendingClarificationsById.get(id);
+	if (!request) return false;
+	settleClarificationRequest(request, resolution);
+	return true;
+}
+
 function isParsedDiff(value: unknown): value is ParsedDiff {
 	if (!value || typeof value !== "object") return false;
 	const candidate = value as Partial<ParsedDiff>;
@@ -557,6 +612,82 @@ const emptyParametersSchema = {
 	type: "object",
 	properties: {},
 } as never;
+
+const clarificationParametersSchema = {
+	type: "object",
+	properties: {
+		question: { type: "string" },
+		options: { type: "array", items: { type: "string" } },
+	},
+	required: ["question"],
+	additionalProperties: false,
+} as never;
+
+const desktopClarificationExtension: ExtensionFactory = (pi) => {
+	pi.registerTool({
+		name: "ask_clarifying_question",
+		label: "Ask Question",
+		description: "Ask the user a clarifying question and wait up to 5 minutes for a response.",
+		parameters: clarificationParametersSchema,
+		async execute(_toolCallId, params, signal, _onUpdate, context) {
+			const rawQuestion = (params as { question?: unknown }).question;
+			const question = typeof rawQuestion === "string" ? rawQuestion.trim() : "";
+			if (!question) {
+				return {
+					content: [{ type: "text", text: "No clarification question was provided." }],
+					details: { resolution: "invalid" },
+				};
+			}
+			const rawOptions = (params as { options?: unknown }).options;
+			const options = Array.from(
+				new Set(
+					(Array.isArray(rawOptions) ? rawOptions : [])
+						.map((option) => (typeof option === "string" ? option.trim() : ""))
+						.filter((option) => option.length > 0),
+				),
+			).slice(0, 8);
+			const sessionId = context.sessionManager.getSessionId();
+			const requestId = `clarification-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			const resolution = await new Promise<DesktopClarificationResolution>((resolveResolution) => {
+				const request: PendingDesktopClarification = {
+					id: requestId,
+					sessionId,
+					question,
+					options,
+					createdAt: Date.now(),
+					resolve: resolveResolution,
+					timer: setTimeout(() => {
+						const pending = pendingClarificationsById.get(requestId);
+						if (pending) settleClarificationRequest(pending, { reason: "timeout" });
+					}, clarificationTimeoutMs),
+				};
+				pendingClarificationsById.set(requestId, request);
+				if (signal) {
+					request.abortSignal = signal;
+					request.abortHandler = () => settleClarificationRequest(request, { reason: "aborted" });
+					if (signal.aborted) {
+						settleClarificationRequest(request, { reason: "aborted" });
+					} else {
+						signal.addEventListener("abort", request.abortHandler, { once: true });
+					}
+				}
+				if (current?.session.sessionId === sessionId) publishState();
+			});
+			const text =
+				resolution.reason === "answered" && resolution.answer
+					? resolution.answer
+					: resolution.reason === "rejected"
+						? "The user declined to answer this clarification."
+						: resolution.reason === "timeout"
+							? "No response was received within 5 minutes. Proceed with best judgment."
+							: "The clarification request was cancelled.";
+			return {
+				content: [{ type: "text", text }],
+				details: { question, resolution: resolution.reason },
+			};
+		},
+	});
+};
 
 const desktopTodoExtension: ExtensionFactory = (pi) => {
 	pi.registerTool({
@@ -749,6 +880,7 @@ function serializeState(): DesktopState {
 		isStreaming: session.isStreaming,
 		pendingMessageCount: session.pendingMessageCount + getQueuedPrompts(session).length,
 		queuedPrompts: summarizeQueuedPrompts(session),
+		clarificationRequests: clarificationRequestsForSession(session.sessionId),
 		messageCount: session.messages.length,
 		todos: todosBySessionId.get(session.sessionId) ?? [],
 	};
@@ -2064,6 +2196,22 @@ ipcMain.handle("pi:steer-queued-prompt", async (_event, id: string) => {
 		await submitPrompt(queuedPrompt);
 	}
 	removeQueuedPrompt(id);
+	const next = serializeState();
+	send("pi:state", next);
+	return next;
+});
+ipcMain.handle("pi:resolve-clarification", async (_event, id: string, answer: unknown) => {
+	await ensureDesktopSession();
+	const trimmed = typeof answer === "string" ? answer.trim() : "";
+	if (!trimmed) throw new Error("Clarification answer cannot be empty.");
+	resolveClarificationRequest(id, { answer: trimmed, reason: "answered" });
+	const next = serializeState();
+	send("pi:state", next);
+	return next;
+});
+ipcMain.handle("pi:reject-clarification", async (_event, id: string) => {
+	await ensureDesktopSession();
+	resolveClarificationRequest(id, { reason: "rejected" });
 	const next = serializeState();
 	send("pi:state", next);
 	return next;

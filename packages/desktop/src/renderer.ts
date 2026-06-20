@@ -21,6 +21,7 @@ type DesktopState = {
 	isStreaming: boolean;
 	pendingMessageCount: number;
 	queuedPrompts: DesktopQueuedPrompt[];
+	clarificationRequests: DesktopClarificationRequest[];
 	messageCount: number;
 	todos: DesktopTodo[];
 };
@@ -29,6 +30,14 @@ type DesktopQueuedPrompt = {
 	id: string;
 	text: string;
 	imageCount: number;
+	createdAt: number;
+};
+
+type DesktopClarificationRequest = {
+	id: string;
+	sessionId: string;
+	question: string;
+	options: string[];
 	createdAt: number;
 };
 
@@ -207,6 +216,8 @@ type PiDesktopApi = {
 		};
 	}>;
 	steerQueuedPrompt(id: string): Promise<DesktopState>;
+	resolveClarification(id: string, answer: string): Promise<DesktopState>;
+	rejectClarification(id: string): Promise<DesktopState>;
 	abort(): Promise<DesktopState>;
 	chooseContext(kind: "files" | "folder" | "workspace"): Promise<DesktopContextSelection[]>;
 	setCwd(cwd: string): Promise<DesktopState>;
@@ -363,6 +374,10 @@ const queuedPromptList = document.createElement("div");
 queuedPromptList.className = "queued-prompts";
 queuedPromptList.hidden = true;
 promptInput.before(queuedPromptList);
+const clarificationRequestList = document.createElement("div");
+clarificationRequestList.className = "clarification-requests";
+clarificationRequestList.hidden = true;
+queuedPromptList.before(clarificationRequestList);
 const reviewCommentsBadge = document.createElement("div");
 reviewCommentsBadge.id = "review-comments-badge";
 reviewCommentsBadge.className = "review-comments-badge";
@@ -386,6 +401,7 @@ let reviewComments: ReviewDraftComment[] = [];
 let reviewDiffData: ParsedDiff | undefined;
 let activeCommentAnchor: ReviewCommentAnchor | undefined;
 let rangeSelectStart: { filePath: string; oldLine?: number; newLine?: number; side: "old" | "new" } | undefined;
+const clarificationDraftsById = new Map<string, string>();
 const completedToolExecutions = new Map<string, { isError: boolean }>();
 const diffLineMetadata = new WeakMap<HTMLElement, { file: DiffFile; line: DiffLine }>();
 let visibleMessageLimit = 120;
@@ -1814,6 +1830,7 @@ function renderState(next: DesktopState): void {
 	sessionShortId.textContent = shortId(next.sessionId);
 	messageCount.textContent = String(next.messageCount);
 	queueCount.textContent = String(next.pendingMessageCount);
+	renderClarificationRequests();
 	renderQueuedPrompts();
 	contextSummary.innerHTML = `
 		<div><span>Working directory</span><strong>${next.cwd}</strong></div>
@@ -2887,6 +2904,111 @@ function renderQueuedPrompts(): void {
 		actions.append(steer, edit);
 		item.append(meta, actions);
 		queuedPromptList.append(item);
+	}
+}
+
+function renderClarificationRequests(): void {
+	const requests = state?.clarificationRequests ?? [];
+	const activeIds = new Set(requests.map((request) => request.id));
+	for (const id of clarificationDraftsById.keys()) {
+		if (!activeIds.has(id)) clarificationDraftsById.delete(id);
+	}
+	clarificationRequestList.replaceChildren();
+	clarificationRequestList.hidden = requests.length === 0;
+	for (const request of requests) {
+		const card = document.createElement("section");
+		card.className = "clarification-request";
+		const heading = document.createElement("div");
+		heading.className = "clarification-request-heading";
+		const badge = document.createElement("span");
+		badge.textContent = "Input needed";
+		const question = document.createElement("strong");
+		question.textContent = request.question;
+		heading.append(badge, question);
+
+		const form = document.createElement("form");
+		form.className = "clarification-request-form";
+		const input = document.createElement("input");
+		input.type = "text";
+		input.placeholder = "Type your answer";
+		input.setAttribute("aria-label", request.question);
+		input.value = clarificationDraftsById.get(request.id) ?? "";
+		const optionButtons: HTMLButtonElement[] = [];
+		if (request.options?.length) {
+			const options = document.createElement("div");
+			options.className = "clarification-options";
+			for (const option of request.options) {
+				const button = document.createElement("button");
+				button.type = "button";
+				button.className = "clarification-option";
+				button.textContent = option;
+				button.setAttribute("aria-pressed", String(input.value === option));
+				button.addEventListener("click", () => {
+					input.value = option;
+					clarificationDraftsById.set(request.id, option);
+					for (const candidate of optionButtons) {
+						candidate.setAttribute("aria-pressed", String(candidate === button));
+					}
+					submit.disabled = false;
+				});
+				optionButtons.push(button);
+				options.append(button);
+			}
+			form.append(options);
+		}
+
+		const answerRow = document.createElement("div");
+		answerRow.className = "clarification-answer-row";
+		const submit = document.createElement("button");
+		submit.type = "submit";
+		submit.className = "primary";
+		submit.textContent = "Continue";
+		submit.disabled = !input.value.trim();
+		const skip = document.createElement("button");
+		skip.type = "button";
+		skip.textContent = "Skip";
+		input.addEventListener("input", () => {
+			clarificationDraftsById.set(request.id, input.value);
+			submit.disabled = !input.value.trim();
+			for (const candidate of optionButtons) {
+				candidate.setAttribute("aria-pressed", String(candidate.textContent === input.value));
+			}
+		});
+		form.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			const answer = input.value.trim();
+			if (!answer) return;
+			for (const action of form.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")) {
+				action.disabled = true;
+			}
+			try {
+				clarificationDraftsById.delete(request.id);
+				renderState(await window.piDesktop.resolveClarification(request.id, answer));
+			} catch (error) {
+				showError(error);
+				for (const action of form.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")) {
+					action.disabled = false;
+				}
+			}
+		});
+		skip.addEventListener("click", async () => {
+			for (const action of form.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")) {
+				action.disabled = true;
+			}
+			try {
+				clarificationDraftsById.delete(request.id);
+				renderState(await window.piDesktop.rejectClarification(request.id));
+			} catch (error) {
+				showError(error);
+				for (const action of form.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")) {
+					action.disabled = false;
+				}
+			}
+		});
+		answerRow.append(input, skip, submit);
+		form.append(answerRow);
+		card.append(heading, form);
+		clarificationRequestList.append(card);
 	}
 }
 
