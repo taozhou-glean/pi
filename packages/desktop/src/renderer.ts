@@ -1216,8 +1216,27 @@ function scrollMessagesToBottom(): void {
 	shouldFollowMessages = true;
 }
 
+function forceFollowMessagesToBottom(): void {
+	shouldFollowMessages = true;
+	scrollMessagesToBottom();
+	requestAnimationFrame(scrollMessagesToBottom);
+	setTimeout(scrollMessagesToBottom, 0);
+}
+
+function keepMessagesPinnedAfterComposerResize(): void {
+	if (!shouldFollowMessages) return;
+	requestAnimationFrame(scrollMessagesToBottom);
+	setTimeout(scrollMessagesToBottom, 0);
+}
+
 function isRunActive(nextState = state): boolean {
 	return Boolean(nextState?.isStreaming || (nextState?.pendingMessageCount ?? 0) > 0);
+}
+
+function syncComposerHint(): void {
+	composerHint.textContent = isComposerBusy
+		? "Enter queues next · ⌘ Enter steers current run"
+		: "Enter to send · Shift Enter newline";
 }
 
 function setBusy(isBusy: boolean): void {
@@ -1227,9 +1246,7 @@ function setBusy(isBusy: boolean): void {
 	sendButton.innerHTML = isBusy ? sendButtonStopIcon : sendButtonSendIcon;
 	runState.textContent = isBusy ? "Running" : "Idle";
 	runState.className = `run-state ${isBusy ? "running" : "idle"}`;
-	composerHint.textContent = isBusy
-		? "Enter queues next · ⌘ Enter steers current run"
-		: "Enter to send · Shift Enter newline";
+	syncComposerHint();
 	if (!isBusy) hideStreamingIndicator();
 	composerCompactContext.disabled = isBusy || (state?.messageCount ?? 0) < 2;
 	syncSendButtonState();
@@ -1292,6 +1309,10 @@ function isBrowserUrl(value: string): boolean {
 	return /^(https?|file):\/\//i.test(value);
 }
 
+function isSupportedLinkHref(href: string): boolean {
+	return /^(?:https?|file):\/\//i.test(href);
+}
+
 function appendInlineMarkdown(parent: HTMLElement, text: string): void {
 	const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)|(https?|file):\/\/[^\s<>)]+)/g;
 	let cursor = 0;
@@ -1307,7 +1328,7 @@ function appendInlineMarkdown(parent: HTMLElement, text: string): void {
 			const strong = document.createElement("strong");
 			strong.textContent = raw.slice(2, -2);
 			parent.append(strong);
-		} else if (isBrowserUrl(raw)) {
+		} else if (isSupportedLinkHref(raw)) {
 			const trailingMatch = /[.,!?;:]+$/.exec(raw);
 			const trailing = trailingMatch?.[0] ?? "";
 			const href = trailing ? raw.slice(0, -trailing.length) : raw;
@@ -1319,7 +1340,7 @@ function appendInlineMarkdown(parent: HTMLElement, text: string): void {
 		} else {
 			const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(raw);
 			const href = linkMatch?.[2] ?? "";
-			if (isBrowserUrl(href)) {
+			if (isSupportedLinkHref(href)) {
 				const link = document.createElement("a");
 				link.href = href;
 				link.textContent = linkMatch?.[1] ?? href;
@@ -1602,7 +1623,7 @@ function appendOptimisticUserMessage(
 		baseBackendCount: backendMessages.length,
 	});
 	renderMessages(backendMessages);
-	scrollMessagesToBottom();
+	forceFollowMessagesToBottom();
 	return id;
 }
 
@@ -4388,6 +4409,7 @@ function showDesktopMessage(labelText: string, text: string, variant: "notice" |
 function autosizePrompt(): void {
 	promptInput.style.height = "auto";
 	promptInput.style.height = `${Math.min(promptInput.scrollHeight, 220)}px`;
+	keepMessagesPinnedAfterComposerResize();
 }
 
 function syncSendButtonState(): void {
@@ -4784,6 +4806,7 @@ promptInput.addEventListener("keydown", (event) => {
 promptInput.addEventListener("input", () => {
 	autosizePrompt();
 	syncSendButtonState();
+	syncComposerHint();
 	renderSlashCommandMenu();
 });
 
@@ -4807,7 +4830,7 @@ messagesEl.addEventListener("scroll", () => {
 messagesEl.addEventListener("click", (event) => {
 	if (event.defaultPrevented) return;
 	const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : undefined;
-	if (!anchor || !messagesEl.contains(anchor) || !isBrowserUrl(anchor.href)) return;
+	if (!anchor || !messagesEl.contains(anchor) || !isSupportedLinkHref(anchor.href)) return;
 	event.preventDefault();
 	openUrlInRightBrowser(anchor.href);
 });
