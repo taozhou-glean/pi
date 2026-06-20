@@ -27,10 +27,12 @@ import {
 	persistedMessageEntryIds,
 	type QueuedPromptEntry,
 	queuedPromptEntryType,
+	queuedPromptRemovalEntries,
 	type ResponseFeedbackRating,
 	replayQueuedPrompts,
 	replayResponseFeedback,
 	responseFeedbackEntryType,
+	type TurnDiffArtifact,
 	turnDiffEntryType,
 } from "./session-persistence";
 
@@ -148,7 +150,7 @@ type DesktopState = {
 		contextWindow: number;
 		percent: number | null;
 	};
-	lastTurnDiff?: ParsedDiff;
+	lastTurnDiff?: TurnDiffArtifact;
 	thinkingLevel?: string;
 	availableThinkingLevels?: string[];
 	authRequired: boolean;
@@ -209,6 +211,7 @@ type DesktopDiffScope = "working-tree" | "staged" | "last-turn";
 type DesktopTurnSnapshot = {
 	baseRef?: string;
 	diff?: ParsedDiff;
+	messageEntryId?: string;
 	untrackedPaths: Set<string>;
 };
 
@@ -615,9 +618,13 @@ function resolvePermissionRequest(id: string, reply: DesktopPermissionReply): bo
 }
 
 function hydrateLastTurnDiff(session: AgentSession): void {
-	const diff = latestTurnDiff(session.sessionManager.getBranch());
-	if (diff) {
-		turnSnapshotsBySessionId.set(session.sessionId, { diff, untrackedPaths: new Set<string>() });
+	const artifact = latestTurnDiff(session.sessionManager.getBranch());
+	if (artifact) {
+		turnSnapshotsBySessionId.set(session.sessionId, {
+			diff: artifact.diff,
+			messageEntryId: artifact.messageEntryId,
+			untrackedPaths: new Set<string>(),
+		});
 	} else {
 		turnSnapshotsBySessionId.delete(session.sessionId);
 	}
@@ -987,6 +994,14 @@ async function fetchCurrentGleanUser(): Promise<DesktopCurrentUser | undefined> 
 	};
 }
 
+function turnDiffArtifactFromSnapshot(snapshot: DesktopTurnSnapshot | undefined): TurnDiffArtifact | undefined {
+	if (!snapshot?.diff) return undefined;
+	return {
+		diff: snapshot.diff,
+		...(snapshot.messageEntryId ? { messageEntryId: snapshot.messageEntryId } : {}),
+	};
+}
+
 function serializeState(): DesktopState {
 	const session = getSession();
 	const model = session.model;
@@ -1002,7 +1017,7 @@ function serializeState(): DesktopState {
 		sessionName: session.sessionManager.getSessionName(),
 		model: hasRealModel && model ? { provider: model.provider, id: model.id } : undefined,
 		contextUsage: session.getContextUsage(),
-		lastTurnDiff: turnSnapshotsBySessionId.get(session.sessionId)?.diff,
+		lastTurnDiff: turnDiffArtifactFromSnapshot(turnSnapshotsBySessionId.get(session.sessionId)),
 		thinkingLevel: session.thinkingLevel,
 		availableThinkingLevels: session.getAvailableThinkingLevels(),
 		authRequired: availableModelCount === 0,
@@ -1099,12 +1114,13 @@ function handleSessionEvent(event: AgentSessionEvent): void {
 	send("pi:event", event);
 	if (
 		event.type === "agent_start" ||
-		event.type === "agent_end" ||
 		event.type === "queue_update" ||
 		event.type === "tool_execution_start" ||
 		event.type === "tool_execution_end"
 	) {
 		sendSessionStatus();
+	} else if (event.type === "agent_end") {
+		sendSessionStatus(getSession(), Boolean(event.willRetry || getQueuedPrompts().length > 0));
 	}
 	if (event.type === "agent_end" && !event.willRetry) {
 		captureLastTurnDiff().catch(() => {});
@@ -1214,6 +1230,9 @@ async function forkDesktopSession(entryId: string): Promise<DesktopState> {
 	const forkedPath = sessionManager.createBranchedSession(entryId);
 	if (!forkedPath) {
 		throw new Error("Could not create a persisted branch for this chat.");
+	}
+	for (const removal of queuedPromptRemovalEntries(sessionManager.getBranch())) {
+		sessionManager.appendCustomEntry(queuedPromptEntryType, removal);
 	}
 	return createDesktopSession({ sessionPath: forkedPath });
 }
@@ -1559,14 +1578,27 @@ async function captureLastTurnBase(): Promise<void> {
 	}
 }
 
+function latestAssistantMessageEntryId(session: AgentSession): string | undefined {
+	const entryIdsByMessage = persistedMessageEntryIds(session.sessionManager.getBranch());
+	for (let index = session.messages.length - 1; index >= 0; index--) {
+		const message = session.messages[index];
+		if (!message || typeof message !== "object") continue;
+		const typed = message as { role?: string; content?: unknown };
+		if (typed.role !== "assistant" || !textFromContent(typed.content).trim()) continue;
+		return entryIdsByMessage.get(message);
+	}
+	return undefined;
+}
+
 async function captureLastTurnDiff(): Promise<void> {
 	await ensureDesktopSession();
 	const session = getSession();
 	const snapshot = turnSnapshotsBySessionId.get(session.sessionId);
 	if (!snapshot) return;
 	snapshot.diff = await getDesktopDiff("last-turn", 0);
+	snapshot.messageEntryId = latestAssistantMessageEntryId(session);
 	snapshot.baseRef = undefined;
-	session.sessionManager.appendCustomEntry(turnDiffEntryType, snapshot.diff);
+	session.sessionManager.appendCustomEntry(turnDiffEntryType, turnDiffArtifactFromSnapshot(snapshot));
 	publishState();
 }
 

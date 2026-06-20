@@ -6,6 +6,11 @@ export const responseFeedbackEntryType = "cowork_response_feedback";
 
 export type ResponseFeedbackRating = "positive" | "negative";
 
+export interface TurnDiffArtifact {
+	diff: ParsedDiff;
+	messageEntryId?: string;
+}
+
 export interface PersistedResponseFeedback {
 	entryId: string;
 	rating: ResponseFeedbackRating | null;
@@ -109,6 +114,10 @@ export function replayQueuedPrompts(entries: SessionEntryLike[]): PersistedQueue
 	return Array.from(prompts.values());
 }
 
+export function queuedPromptRemovalEntries(entries: SessionEntryLike[]): QueuedPromptEntry[] {
+	return replayQueuedPrompts(entries).map((prompt) => ({ action: "remove", id: prompt.id }));
+}
+
 function isParsedDiff(value: unknown): value is ParsedDiff {
 	if (!value || typeof value !== "object") return false;
 	const candidate = value as Partial<ParsedDiff>;
@@ -129,11 +138,25 @@ function isParsedDiff(value: unknown): value is ParsedDiff {
 	);
 }
 
-export function latestTurnDiff(entries: SessionEntryLike[]): ParsedDiff | undefined {
-	let latest: ParsedDiff | undefined;
+function normalizeTurnDiffArtifact(value: unknown): TurnDiffArtifact | undefined {
+	if (isParsedDiff(value)) return { diff: value };
+	if (!value || typeof value !== "object") return undefined;
+	const candidate = value as Partial<TurnDiffArtifact>;
+	if (!isParsedDiff(candidate.diff)) return undefined;
+	return {
+		diff: candidate.diff,
+		...(typeof candidate.messageEntryId === "string" && candidate.messageEntryId
+			? { messageEntryId: candidate.messageEntryId }
+			: {}),
+	};
+}
+
+export function latestTurnDiff(entries: SessionEntryLike[]): TurnDiffArtifact | undefined {
+	let latest: TurnDiffArtifact | undefined;
 	for (const entry of entries) {
 		if (entry.type !== "custom" || entry.customType !== turnDiffEntryType) continue;
-		if (isParsedDiff(entry.data)) latest = entry.data;
+		const artifact = normalizeTurnDiffArtifact(entry.data);
+		if (artifact) latest = artifact;
 	}
 	return latest;
 }

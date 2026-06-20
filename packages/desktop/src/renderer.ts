@@ -13,7 +13,7 @@ type DesktopState = {
 		contextWindow: number;
 		percent: number | null;
 	};
-	lastTurnDiff?: ParsedDiff;
+	lastTurnDiff?: ParsedDiff | { diff: ParsedDiff; messageEntryId?: string };
 	thinkingLevel?: string;
 	availableThinkingLevels?: string[];
 	authRequired: boolean;
@@ -279,6 +279,12 @@ type ComposerFileAttachment = {
 	name: string;
 };
 
+type ComposerDraft = {
+	files: Array<{ name: string; path: string }>;
+	images: Array<{ data: string; mimeType: string; name: string }>;
+	text: string;
+};
+
 type DesktopContextSelection =
 	| { type: "path"; path: string; name?: string }
 	| { type: "image"; path: string; name: string; data: string; mimeType: string };
@@ -517,6 +523,8 @@ let currentMessages: DesktopMessage[] = [];
 let optimisticUserMessages: OptimisticDesktopMessage[] = [];
 let composerImages: ComposerImageAttachment[] = [];
 let composerFiles: ComposerFileAttachment[] = [];
+const composerDraftsByChatKey = new Map<string, ComposerDraft>();
+let activeComposerDraftKey: string | undefined;
 let switchingSessionPath: string | undefined;
 let renderedSessionId: string | undefined;
 let isEditingSessionTitle = false;
@@ -782,6 +790,62 @@ function basename(path: string): string {
 
 function shortId(id?: string): string {
 	return id ? id.slice(0, 8) : "-";
+}
+
+function composerDraftKey(value = state): string | undefined {
+	if (!value) return undefined;
+	return value.sessionFile || value.sessionId;
+}
+
+function snapshotComposerDraft(): ComposerDraft {
+	return {
+		files: composerFiles.map((file) => ({ name: file.name, path: file.path })),
+		images: composerImages.map((image) => ({ data: image.data, mimeType: image.mimeType, name: image.name })),
+		text: promptInput.value,
+	};
+}
+
+function hasComposerDraft(draft: ComposerDraft | undefined): boolean {
+	return Boolean(draft?.text.trim() || draft?.images.length || draft?.files.length);
+}
+
+function saveComposerDraft(key = activeComposerDraftKey): void {
+	if (!key) return;
+	const draft = snapshotComposerDraft();
+	if (hasComposerDraft(draft)) composerDraftsByChatKey.set(key, draft);
+	else composerDraftsByChatKey.delete(key);
+}
+
+function restoreComposerDraft(key: string | undefined): void {
+	clearComposerAttachments();
+	const draft = key ? composerDraftsByChatKey.get(key) : undefined;
+	promptInput.value = draft?.text ?? "";
+	composerImages = (draft?.images ?? []).map((image) => ({
+		id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		data: image.data,
+		mimeType: image.mimeType,
+		name: image.name || "Draft image",
+		objectUrl: `data:${image.mimeType};base64,${image.data}`,
+	}));
+	composerFiles = (draft?.files ?? []).map((file) => ({
+		id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		name: file.name || basename(file.path),
+		path: file.path,
+	}));
+	renderComposerAttachments();
+	autosizePrompt();
+	syncSendButtonState();
+}
+
+function transitionComposerDraftKey(nextKey: string | undefined, sameChat = false): void {
+	const previousKey = activeComposerDraftKey;
+	if (previousKey && previousKey !== nextKey) saveComposerDraft(previousKey);
+	if (sameChat && previousKey && nextKey && previousKey !== nextKey && !composerDraftsByChatKey.has(nextKey)) {
+		const previousDraft = composerDraftsByChatKey.get(previousKey);
+		if (previousDraft) composerDraftsByChatKey.set(nextKey, previousDraft);
+	}
+	activeComposerDraftKey = nextKey;
+	if (previousKey !== nextKey) restoreComposerDraft(nextKey);
 }
 
 function reasoningDisplay(level: string | undefined): string {
@@ -1850,6 +1914,7 @@ function createMessage(message: DesktopMessage, showAssistantActions = false): H
 	const row = document.createElement("article");
 	row.className = `message ${message.role}`;
 	row.classList.toggle("optimistic", (message as Partial<OptimisticDesktopMessage>).optimistic === true);
+	if (message.entryId) row.dataset.entryId = message.entryId;
 
 	if (message.role === "user") {
 		const userContent = splitVisibleTextAndContextPaths(contentText(message));
@@ -2353,6 +2418,31 @@ function addAssistantMessageActions(row: Element, message: DesktopMessage): void
 	row.append(createAssistantMessageActions(message));
 }
 
+function assistantActionIndexes(messages: DesktopMessage[]): Set<number> {
+	const indexes = new Set<number>();
+	for (let segmentStart = 0; segmentStart < messages.length; ) {
+		const userIndex = messages.findIndex((message, index) => index >= segmentStart && message.role === "user");
+		if (userIndex === -1) break;
+		const nextUserIndex = messages.findIndex((message, index) => index > userIndex && message.role === "user");
+		const segmentEnd = nextUserIndex === -1 ? messages.length : nextUserIndex;
+		if (isComposerBusy && nextUserIndex === -1) break;
+		let latestToolCallIndex = -1;
+		for (let index = userIndex + 1; index < segmentEnd; index++) {
+			const message = messages[index]!;
+			if (message.role === "assistant" && message.toolCalls?.length) latestToolCallIndex = index;
+		}
+		for (let index = segmentEnd - 1; index > Math.max(userIndex, latestToolCallIndex); index--) {
+			const message = messages[index]!;
+			if (message.role === "assistant" && contentText(message).trim()) {
+				indexes.add(index);
+				break;
+			}
+		}
+		segmentStart = segmentEnd;
+	}
+	return indexes;
+}
+
 function updateStableMessageRow(
 	row: HTMLElement,
 	message: DesktopMessage,
@@ -2363,6 +2453,8 @@ function updateStableMessageRow(
 	showAssistantActions = false,
 ): void {
 	row.dataset.messageIndex = String(index);
+	if (message.entryId) row.dataset.entryId = message.entryId;
+	else delete row.dataset.entryId;
 	row.classList.toggle("optimistic", (message as Partial<OptimisticDesktopMessage>).optimistic === true);
 	const time = row.querySelector(".message-time");
 	const nextTime = message.timestamp
@@ -2420,8 +2512,9 @@ function normalizePlanItems(value: unknown): DesktopTodo[] {
 		.filter((item) => item.content.length > 0);
 }
 
-function latestPlanItems(messages: DesktopMessage[]): DesktopTodo[] | undefined {
-	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
+function latestTurnPlanItems(messages: DesktopMessage[]): DesktopTodo[] | undefined {
+	const latestUserIndex = lastUserMessageIndex(messages);
+	for (let messageIndex = messages.length - 1; messageIndex > latestUserIndex; messageIndex--) {
 		const calls = messages[messageIndex]?.toolCalls ?? [];
 		for (let callIndex = calls.length - 1; callIndex >= 0; callIndex--) {
 			const call = calls[callIndex]!;
@@ -2434,7 +2527,7 @@ function latestPlanItems(messages: DesktopMessage[]): DesktopTodo[] | undefined 
 
 function renderSessionPlan(messages: DesktopMessage[]): void {
 	const existing = messagesEl.querySelector(".session-plan");
-	const items = Array.isArray(state?.todos) ? normalizePlanItems(state.todos) : latestPlanItems(messages);
+	const items = latestTurnPlanItems(messages);
 	if (!items || items.length === 0) {
 		existing?.remove();
 		return;
@@ -2488,10 +2581,36 @@ function openReviewPanel(scope: "working-tree" | "staged" | "last-turn" = "worki
 	refreshReview().catch(showError);
 }
 
+function lastTurnArtifactDiff(artifact: DesktopState["lastTurnDiff"]): ParsedDiff | undefined {
+	return artifact && "diff" in artifact ? artifact.diff : artifact;
+}
+
+function lastTurnArtifactMessageEntryId(artifact: DesktopState["lastTurnDiff"]): string | undefined {
+	return artifact &&
+		"messageEntryId" in artifact &&
+		typeof artifact.messageEntryId === "string" &&
+		artifact.messageEntryId
+		? artifact.messageEntryId
+		: undefined;
+}
+
+function messageElementForEntryId(entryId: string | undefined): Element | undefined {
+	if (!entryId) return undefined;
+	return Array.from(messagesEl.querySelectorAll(".message")).find(
+		(row) => row instanceof HTMLElement && row.dataset.entryId === entryId,
+	);
+}
+
 function renderLastTurnArtifact(): void {
-	messagesEl.querySelector(".change-artifact")?.remove();
-	const diff = state?.lastTurnDiff;
+	messagesEl.querySelectorAll(".change-artifact").forEach((artifact) => {
+		artifact.remove();
+	});
+	const artifact = state?.lastTurnDiff;
+	const diff = lastTurnArtifactDiff(artifact);
 	if (!diff || diff.files.length === 0 || isComposerBusy) return;
+	const messageEntryId = lastTurnArtifactMessageEntryId(artifact);
+	const anchor = messageElementForEntryId(messageEntryId);
+	if (messageEntryId && !anchor) return;
 	const card = document.createElement("article");
 	card.className = "message assistant change-artifact";
 	const header = document.createElement("div");
@@ -2539,7 +2658,8 @@ function renderLastTurnArtifact(): void {
 	}
 	card.append(header, files);
 	const indicator = document.getElementById("streaming-indicator");
-	messagesEl.insertBefore(card, indicator);
+	if (anchor) messagesEl.insertBefore(card, anchor.nextSibling ?? indicator);
+	else messagesEl.insertBefore(card, indicator);
 }
 
 function patchStableStreamingRender(
@@ -2548,6 +2668,7 @@ function patchStableStreamingRender(
 	activeAssistantIndex: number,
 ): void {
 	const indicator = document.getElementById("streaming-indicator");
+	const actionIndexes = assistantActionIndexes(messages);
 	const turnDurations = completedTurnDurations(messages);
 	const { skippedIndexes, tracedToolIndexes, tracesByFinalIndex } = createCompletedTurnWorkTraces(
 		messages,
@@ -2562,11 +2683,7 @@ function patchStableStreamingRender(
 		}
 		if (!hasVisibleContent(message)) continue;
 		const isActivelyStreaming = isComposerBusy && index === activeAssistantIndex;
-		const showAssistantActions =
-			message.role === "assistant" &&
-			Boolean(contentText(message).trim()) &&
-			index === activeAssistantIndex &&
-			!isActivelyStreaming;
+		const showAssistantActions = actionIndexes.has(index) && !isActivelyStreaming;
 		let row = messagesEl.querySelector<HTMLElement>(`[data-message-index="${index}"]`);
 		if (!row) {
 			row = createMessage(message, showAssistantActions);
@@ -2677,6 +2794,7 @@ function renderMessages(messages: DesktopMessage[]): void {
 		messagesEl.append(older);
 	}
 
+	const actionIndexes = assistantActionIndexes(messages);
 	const turnDurations = completedTurnDurations(messages);
 	const { skippedIndexes, tracedToolIndexes, tracesByFinalIndex } = createCompletedTurnWorkTraces(
 		messages,
@@ -2688,11 +2806,7 @@ function renderMessages(messages: DesktopMessage[]): void {
 		if (skippedIndexes.has(index)) continue;
 		if (!hasVisibleContent(message)) continue;
 		const isActivelyStreaming = isComposerBusy && index === lastAssistantIndex;
-		const showAssistantActions =
-			message.role === "assistant" &&
-			Boolean(contentText(message).trim()) &&
-			index === lastAssistantIndex &&
-			!isActivelyStreaming;
+		const showAssistantActions = actionIndexes.has(index) && !isActivelyStreaming;
 		const row = createMessage(message, showAssistantActions);
 		row.dataset.messageIndex = String(index);
 		row.classList.toggle(
@@ -2743,7 +2857,10 @@ window.__piDesktopTest = {
 
 function renderState(next: DesktopState): void {
 	const previous = state;
+	const previousDraftKey = activeComposerDraftKey ?? composerDraftKey(previous);
+	const nextDraftKey = composerDraftKey(next);
 	const sessionChanged = Boolean(previous && (previous.sessionId !== next.sessionId || previous.cwd !== next.cwd));
+	const chatKeyChanged = previousDraftKey !== nextDraftKey;
 	const runStateChanged = Boolean(
 		previous &&
 			!sessionChanged &&
@@ -2755,6 +2872,9 @@ function renderState(next: DesktopState): void {
 		isAbortingRun = false;
 	}
 	state = next;
+	if (!previous || sessionChanged || chatKeyChanged) {
+		transitionComposerDraftKey(nextDraftKey, Boolean(previous && !sessionChanged));
+	}
 	restoreProjectLayout(next.cwd);
 	const requiresAuth = next.authRequired;
 	appEl.classList.toggle("auth-required", requiresAuth);

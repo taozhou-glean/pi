@@ -4,6 +4,7 @@ import {
 	latestTurnDiff,
 	persistedMessageEntryIds,
 	queuedPromptEntryType,
+	queuedPromptRemovalEntries,
 	replayQueuedPrompts,
 	replayResponseFeedback,
 	responseFeedbackEntryType,
@@ -49,6 +50,18 @@ describe("replayQueuedPrompts", () => {
 				enqueue("valid", "kept", 3),
 			]),
 		).toEqual([{ createdAt: 3, id: "valid", text: "kept" }]);
+	});
+});
+
+describe("queuedPromptRemovalEntries", () => {
+	it("builds removal entries for pending queued prompts only", () => {
+		expect(
+			queuedPromptRemovalEntries([
+				enqueue("already-consumed", "first", 1),
+				enqueue("pending", "second", 2),
+				{ customType: queuedPromptEntryType, data: { action: "remove", id: "already-consumed" }, type: "custom" },
+			]),
+		).toEqual([{ action: "remove", id: "pending" }]);
 	});
 });
 
@@ -140,8 +153,18 @@ describe("latestTurnDiff", () => {
 			latestTurnDiff([
 				{ customType: turnDiffEntryType, data: first, type: "custom" },
 				{ customType: turnDiffEntryType, data: { files: "invalid" }, type: "custom" },
-				{ customType: turnDiffEntryType, data: latest, type: "custom" },
+				{
+					customType: turnDiffEntryType,
+					data: { diff: latest, messageEntryId: "assistant-entry" },
+					type: "custom",
+				},
 			]),
-		).toEqual(latest);
+		).toEqual({ diff: latest, messageEntryId: "assistant-entry" });
+	});
+
+	it("keeps legacy diff entries readable", () => {
+		const diff = { files: [], totalAdditions: 0, totalDeletions: 0 };
+
+		expect(latestTurnDiff([{ customType: turnDiffEntryType, data: diff, type: "custom" }])).toEqual({ diff });
 	});
 });
