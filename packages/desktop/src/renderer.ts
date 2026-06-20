@@ -123,7 +123,10 @@ type DesktopSessionInfo = {
 	modified: string;
 	messageCount: number;
 	firstMessage: string;
+	isRunning?: boolean;
 };
+
+type SessionStatus = "running" | "finished";
 
 type GitStatus = {
 	isRepo: boolean;
@@ -505,6 +508,7 @@ const clarificationDraftsById = new Map<string, string>();
 const completedToolExecutions = new Map<string, { isError: boolean }>();
 const toolStackOpenStateByKey = new Map<string, boolean>();
 const expandedTurnWorkKeys = new Set<string>();
+const sessionStatusByKey = new Map<string, SessionStatus>();
 const diffLineMetadata = new WeakMap<HTMLElement, { file: DiffFile; line: DiffLine }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
@@ -1210,6 +1214,10 @@ function isMessagesScrolledToBottom(): boolean {
 function scrollMessagesToBottom(): void {
 	messagesEl.scrollTop = messagesEl.scrollHeight;
 	shouldFollowMessages = true;
+}
+
+function isRunActive(nextState = state): boolean {
+	return Boolean(nextState?.isStreaming || (nextState?.pendingMessageCount ?? 0) > 0);
 }
 
 function setBusy(isBusy: boolean): void {
@@ -2641,6 +2649,12 @@ window.__piDesktopTest = {
 
 function renderState(next: DesktopState): void {
 	const previous = state;
+	const sessionChanged = Boolean(previous && (previous.sessionId !== next.sessionId || previous.cwd !== next.cwd));
+	const runStateChanged = Boolean(
+		previous &&
+			!sessionChanged &&
+			(previous.isStreaming !== next.isStreaming || previous.pendingMessageCount !== next.pendingMessageCount),
+	);
 	state = next;
 	const requiresAuth = next.authRequired;
 	appEl.classList.toggle("auth-required", requiresAuth);
@@ -2658,6 +2672,13 @@ function renderState(next: DesktopState): void {
 	composerWorkspaceName.textContent = basename(next.cwd);
 	composerWorkspaceButton.title = next.cwd;
 	sessionShortId.textContent = shortId(next.sessionId);
+	const active = activeSession();
+	if (active) {
+		markSessionRead(active);
+		const stateRunning = isRunActive(next);
+		active.isRunning = stateRunning;
+		setSessionStatus(active, stateRunning ? "running" : undefined);
+	}
 	messageCount.textContent = String(next.messageCount);
 	queueCount.textContent = String(next.pendingMessageCount);
 	renderPermissionMode();
@@ -2670,7 +2691,7 @@ function renderState(next: DesktopState): void {
 		<div><span>Session file</span><strong>${next.sessionFile ?? "Not written yet"}</strong></div>
 		<div><span>Model</span><strong>${requiresAuth ? "Login required" : model}</strong></div>
 	`;
-	setBusy(next.isStreaming);
+	setBusy(isRunActive(next));
 	renderContextUsage(next);
 	renderComposerContext();
 
@@ -2679,13 +2700,14 @@ function renderState(next: DesktopState): void {
 		modelSelect.value = selectedValue;
 	}
 	syncComposerModelSelection();
-	if (!previous || previous.sessionId !== next.sessionId || previous.cwd !== next.cwd) {
+	if (!previous || sessionChanged) {
 		activeCommentAnchor = undefined;
 		reviewDiffData = undefined;
 		loadReviewComments();
 		renderSessionList();
 	} else {
 		renderReviewCommentsBadge();
+		if (runStateChanged) renderSessionList();
 	}
 }
 
@@ -2769,6 +2791,32 @@ function isSessionPinned(session: DesktopSessionInfo | undefined): boolean {
 
 function isSessionArchived(session: DesktopSessionInfo | undefined): boolean {
 	return sessionIdentityKeys(session).some((key) => archivedSessionKeys.has(key));
+}
+
+function markSessionRead(session: DesktopSessionInfo | undefined): void {
+	if (!session) return;
+	let changed = false;
+	for (const key of sessionIdentityKeys(session)) {
+		if (sessionStatusByKey.get(key) === "finished") {
+			sessionStatusByKey.delete(key);
+			changed = true;
+		}
+	}
+	if (changed) renderSessionList();
+}
+
+function getSessionStatus(session: DesktopSessionInfo | undefined): SessionStatus | undefined {
+	const keys = sessionIdentityKeys(session);
+	if (keys.some((key) => sessionStatusByKey.get(key) === "running")) return "running";
+	if (keys.some((key) => sessionStatusByKey.get(key) === "finished")) return "finished";
+	return undefined;
+}
+
+function setSessionStatus(session: DesktopSessionInfo | undefined, status: SessionStatus | undefined): void {
+	for (const key of sessionIdentityKeys(session)) {
+		if (status) sessionStatusByKey.set(key, status);
+		else sessionStatusByKey.delete(key);
+	}
 }
 
 function setSessionPinned(session: DesktopSessionInfo | undefined, pinned: boolean): void {
@@ -3105,6 +3153,15 @@ function createSessionListItem(session: DesktopSessionInfo, options: { archived?
 	button.title = `${session.name || session.firstMessage || "Untitled session"} · ${basename(session.cwd)}`;
 	const titleEl = document.createElement("span");
 	titleEl.className = "session-item-title";
+	const sessionStatus = getSessionStatus(session);
+	const isRunning = sessionStatus === "running" || (sessionStatus === undefined && session.isRunning);
+	const isFinished = !isRunning && session.id !== state?.sessionId && sessionStatus === "finished";
+	if (isRunning || isFinished) {
+		const statusDot = document.createElement("span");
+		statusDot.className = `session-status-dot ${isRunning ? "running" : "finished"}`;
+		statusDot.title = isRunning ? "Running" : "Finished";
+		titleEl.append(statusDot);
+	}
 	const titleText = document.createElement("span");
 	titleText.className = "session-item-title-text";
 	titleText.textContent = title;
@@ -3125,6 +3182,7 @@ function createSessionListItem(session: DesktopSessionInfo, options: { archived?
 	button.append(titleEl, metaEl);
 	button.addEventListener("click", async () => {
 		try {
+			markSessionRead(session);
 			await switchToSession(session.path);
 		} catch (error) {
 			showError(error);

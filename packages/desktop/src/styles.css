@@ -1538,12 +1538,45 @@ select:focus {
 .session-item-title {
 	display: flex;
 	align-items: center;
+	gap: 6px;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-size: 13px;
 	font-weight: 480;
+}
+
+.session-status-dot {
+	flex: 0 0 auto;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.session-status-dot.running {
+	color: #2bbf6a;
+	background: currentColor;
+	animation: session-running-pulse 1.2s ease-in-out infinite;
+}
+
+.session-status-dot.finished {
+	color: color-mix(in srgb, var(--accent) 45%, #38bdf8);
+	background: currentColor;
+}
+
+@keyframes session-running-pulse {
+	0%,
+	100% {
+		opacity: 0.78;
+		transform: scale(0.9);
+	}
+
+	50% {
+		opacity: 1;
+		transform: scale(1.15);
+	}
 }
 
 .session-item-title-text {
