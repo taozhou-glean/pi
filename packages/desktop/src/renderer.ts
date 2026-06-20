@@ -540,6 +540,7 @@ const pastedTextFileThreshold = 24_000;
 const pinnedSessionKeys = new Set<string>(JSON.parse(localStorage.getItem(pinnedSessionsStorageKey) || "[]"));
 const archivedSessionKeys = new Set<string>(JSON.parse(localStorage.getItem(archivedSessionsStorageKey) || "[]"));
 let showArchivedSessions = false;
+let loadedLayoutCwd: string | undefined;
 const minLeftPanelWidth = 340;
 const maxLeftPanelWidth = 520;
 const minRightPanelWidth = 240;
@@ -592,9 +593,15 @@ function isRightPanelTab(value: unknown): value is RightPanelTab {
 	return value === "inspector" || value === "review" || isWindowPanelTab(value);
 }
 
-function loadLayoutState(): LayoutState {
+function projectLayoutStorageKey(cwd: string): string {
+	return `${layoutStorageKey}:${cwd}`;
+}
+
+function loadLayoutState(storageKey = layoutStorageKey): LayoutState {
 	try {
-		const parsed = JSON.parse(localStorage.getItem(layoutStorageKey) ?? "{}") as Partial<LayoutState>;
+		const parsed = JSON.parse(
+			localStorage.getItem(storageKey) ?? localStorage.getItem(layoutStorageKey) ?? "{}",
+		) as Partial<LayoutState>;
 		return {
 			leftWidth: clamp(Number(parsed.leftWidth) || 390, minLeftPanelWidth, maxLeftPanelWidth),
 			rightWidth: clamp(Number(parsed.rightWidth) || 320, minRightPanelWidth, maxRightPanelWidth),
@@ -620,7 +627,17 @@ function loadLayoutState(): LayoutState {
 }
 
 function saveLayoutState(): void {
-	localStorage.setItem(layoutStorageKey, JSON.stringify(layoutState));
+	const storageKey = state?.cwd ? projectLayoutStorageKey(state.cwd) : layoutStorageKey;
+	localStorage.setItem(storageKey, JSON.stringify(layoutState));
+}
+
+function restoreProjectLayout(cwd: string | undefined): void {
+	if (!cwd || loadedLayoutCwd === cwd) return;
+	loadedLayoutCwd = cwd;
+	Object.assign(layoutState, loadLayoutState(projectLayoutStorageKey(cwd)));
+	applyLayoutState();
+	syncRightPanelContent();
+	syncBottomPanelContent();
 }
 
 function applyLayoutState(): void {
@@ -2714,6 +2731,7 @@ function renderState(next: DesktopState): void {
 			(previous.isStreaming !== next.isStreaming || previous.pendingMessageCount !== next.pendingMessageCount),
 	);
 	state = next;
+	restoreProjectLayout(next.cwd);
 	const requiresAuth = next.authRequired;
 	appEl.classList.toggle("auth-required", requiresAuth);
 	loginScreen.hidden = !requiresAuth;
