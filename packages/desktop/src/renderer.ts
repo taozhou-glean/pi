@@ -21,6 +21,8 @@ type DesktopState = {
 	isStreaming: boolean;
 	pendingMessageCount: number;
 	queuedPrompts: DesktopQueuedPrompt[];
+	permissionMode: DesktopPermissionMode;
+	permissionRequests: DesktopPermissionRequest[];
 	clarificationRequests: DesktopClarificationRequest[];
 	messageCount: number;
 	todos: DesktopTodo[];
@@ -40,6 +42,20 @@ type DesktopClarificationRequest = {
 	options: string[];
 	createdAt: number;
 };
+
+type DesktopPermissionMode = "ask" | "acceptEdits" | "bypassPermissions";
+
+type DesktopPermissionRequest = {
+	id: string;
+	sessionId: string;
+	toolCallId: string;
+	toolName: string;
+	toolInput: unknown;
+	reason: string;
+	createdAt: number;
+};
+
+type DesktopPermissionReply = "allowOnce" | "allowAlways" | "reject";
 
 type DesktopTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
@@ -218,6 +234,8 @@ type PiDesktopApi = {
 	steerQueuedPrompt(id: string): Promise<DesktopState>;
 	resolveClarification(id: string, answer: string): Promise<DesktopState>;
 	rejectClarification(id: string): Promise<DesktopState>;
+	setPermissionMode(mode: DesktopPermissionMode): Promise<DesktopState>;
+	resolvePermission(id: string, reply: DesktopPermissionReply): Promise<DesktopState>;
 	abort(): Promise<DesktopState>;
 	chooseContext(kind: "files" | "folder" | "workspace"): Promise<DesktopContextSelection[]>;
 	setCwd(cwd: string): Promise<DesktopState>;
@@ -334,6 +352,9 @@ const composerContextUsageValue = document.querySelector<HTMLDivElement>("#compo
 const composerCompactContext = document.querySelector<HTMLButtonElement>("#composer-compact-context")!;
 const composerModelButton = document.querySelector<HTMLButtonElement>("#composer-model")!;
 const composerModelMenu = document.querySelector<HTMLDivElement>("#composer-model-menu")!;
+const composerPermissionButton = document.querySelector<HTMLButtonElement>("#composer-permission")!;
+const composerPermissionLabel = document.querySelector<HTMLSpanElement>("#composer-permission-label")!;
+const composerPermissionMenu = document.querySelector<HTMLDivElement>("#composer-permission-menu")!;
 const composerContext = document.querySelector<HTMLDivElement>("#composer-context")!;
 const composerWorkspaceButton = document.querySelector<HTMLButtonElement>("#composer-workspace")!;
 const composerWorkspaceName = document.querySelector<HTMLSpanElement>("#composer-workspace-name")!;
@@ -378,6 +399,10 @@ const clarificationRequestList = document.createElement("div");
 clarificationRequestList.className = "clarification-requests";
 clarificationRequestList.hidden = true;
 queuedPromptList.before(clarificationRequestList);
+const permissionRequestList = document.createElement("div");
+permissionRequestList.className = "permission-requests";
+permissionRequestList.hidden = true;
+clarificationRequestList.before(permissionRequestList);
 const reviewCommentsBadge = document.createElement("div");
 reviewCommentsBadge.id = "review-comments-badge";
 reviewCommentsBadge.className = "review-comments-badge";
@@ -713,6 +738,7 @@ function closeComposerMenus(): void {
 	setMenuOpen(composerAddButton, composerAddMenu, false);
 	setMenuOpen(composerContextUsageButton, composerContextUsageMenu, false);
 	setMenuOpen(composerModelButton, composerModelMenu, false);
+	setMenuOpen(composerPermissionButton, composerPermissionMenu, false);
 	closeSlashCommandMenu();
 }
 
@@ -1830,6 +1856,8 @@ function renderState(next: DesktopState): void {
 	sessionShortId.textContent = shortId(next.sessionId);
 	messageCount.textContent = String(next.messageCount);
 	queueCount.textContent = String(next.pendingMessageCount);
+	renderPermissionMode();
+	renderPermissionRequests();
 	renderClarificationRequests();
 	renderQueuedPrompts();
 	contextSummary.innerHTML = `
@@ -2904,6 +2932,83 @@ function renderQueuedPrompts(): void {
 		actions.append(steer, edit);
 		item.append(meta, actions);
 		queuedPromptList.append(item);
+	}
+}
+
+function permissionModeLabel(mode: DesktopPermissionMode | undefined): string {
+	if (mode === "ask") return "Ask before tools";
+	if (mode === "acceptEdits") return "Allow edits";
+	return "Full access";
+}
+
+function renderPermissionMode(): void {
+	const mode = state?.permissionMode ?? "bypassPermissions";
+	composerPermissionLabel.textContent = permissionModeLabel(mode);
+	composerPermissionButton.dataset.permissionMode = mode;
+	for (const item of composerPermissionMenu.querySelectorAll<HTMLButtonElement>("[data-permission-mode]")) {
+		const selected = item.dataset.permissionMode === mode;
+		item.classList.toggle("selected", selected);
+		item.setAttribute("aria-checked", String(selected));
+	}
+}
+
+function permissionInputPreview(input: unknown): string {
+	const rendered = renderToolInput(input).replace(/\s+/g, " ").trim();
+	return rendered.length > 180 ? `${rendered.slice(0, 177)}...` : rendered;
+}
+
+function renderPermissionRequests(): void {
+	const requests = state?.permissionRequests ?? [];
+	permissionRequestList.replaceChildren();
+	permissionRequestList.hidden = requests.length === 0;
+	for (const request of requests) {
+		const card = document.createElement("section");
+		card.className = "permission-request";
+		const icon = document.createElement("div");
+		icon.className = "permission-request-icon";
+		icon.innerHTML =
+			'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.5 2.8 7.6 7 10 4.2-2.4 7-5.5 7-10V6l-7-3Z" /></svg>';
+		const copy = document.createElement("div");
+		copy.className = "permission-request-copy";
+		const title = document.createElement("strong");
+		title.textContent = `Allow ${formatToolLabel(request.toolName)}?`;
+		const reason = document.createElement("span");
+		reason.textContent = request.reason;
+		copy.append(title, reason);
+		const previewText = permissionInputPreview(request.toolInput);
+		if (previewText) {
+			const preview = document.createElement("code");
+			preview.textContent = previewText;
+			preview.title = renderToolInput(request.toolInput);
+			copy.append(preview);
+		}
+		const actions = document.createElement("div");
+		actions.className = "permission-request-actions";
+		const replies: Array<[DesktopPermissionReply, string]> = [
+			["reject", "Deny"],
+			["allowOnce", "Allow once"],
+			["allowAlways", `Always allow ${formatToolLabel(request.toolName)}`],
+		];
+		for (const [reply, label] of replies) {
+			const button = document.createElement("button");
+			button.type = "button";
+			button.dataset.permissionReply = reply;
+			button.textContent = label;
+			if (reply === "allowOnce") button.className = "primary";
+			button.addEventListener("click", async () => {
+				for (const action of actions.querySelectorAll<HTMLButtonElement>("button")) action.disabled = true;
+				try {
+					renderState(await window.piDesktop.resolvePermission(request.id, reply));
+				} catch (error) {
+					showError(error);
+					for (const action of actions.querySelectorAll<HTMLButtonElement>("button")) action.disabled = false;
+				}
+			});
+			actions.append(button);
+		}
+		copy.append(actions);
+		card.append(icon, copy);
+		permissionRequestList.append(card);
 	}
 }
 
@@ -4089,6 +4194,19 @@ composerModelButton.addEventListener("click", (event) => {
 	}
 });
 
+composerPermissionButton.addEventListener("mousedown", (event) => {
+	event.preventDefault();
+	event.stopPropagation();
+	toggleComposerMenu(composerPermissionButton, composerPermissionMenu);
+});
+
+composerPermissionButton.addEventListener("click", (event) => {
+	event.stopPropagation();
+	if (event.detail === 0) {
+		toggleComposerMenu(composerPermissionButton, composerPermissionMenu);
+	}
+});
+
 composerAddMenu.addEventListener("click", async (event) => {
 	event.stopPropagation();
 	const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-context-kind]");
@@ -4097,6 +4215,19 @@ composerAddMenu.addEventListener("click", async (event) => {
 	try {
 		closeComposerMenus();
 		applyContextSelections(await window.piDesktop.chooseContext(kind), { attachPathChips: kind === "files" });
+	} catch (error) {
+		showError(error);
+	}
+});
+
+composerPermissionMenu.addEventListener("click", async (event) => {
+	event.stopPropagation();
+	const button = (event.target as Element).closest<HTMLButtonElement>("[data-permission-mode]");
+	const mode = button?.dataset.permissionMode;
+	if (mode !== "ask" && mode !== "acceptEdits" && mode !== "bypassPermissions") return;
+	try {
+		renderState(await window.piDesktop.setPermissionMode(mode));
+		closeComposerMenus();
 	} catch (error) {
 		showError(error);
 	}
@@ -4208,6 +4339,8 @@ document.addEventListener("click", (event) => {
 			composerAddMenu.contains(event.target) ||
 			composerModelButton.contains(event.target) ||
 			composerModelMenu.contains(event.target) ||
+			composerPermissionButton.contains(event.target) ||
+			composerPermissionMenu.contains(event.target) ||
 			sessionMenuTrigger.contains(event.target) ||
 			sessionMenu.contains(event.target) ||
 			sidebarSettings.contains(event.target))

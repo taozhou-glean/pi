@@ -86,6 +86,32 @@ type PendingDesktopClarification = DesktopClarificationRequest & {
 	abortHandler?: () => void;
 };
 
+type DesktopPermissionMode = "ask" | "acceptEdits" | "bypassPermissions";
+
+type DesktopPermissionRequest = {
+	id: string;
+	sessionId: string;
+	toolCallId: string;
+	toolName: string;
+	toolInput: unknown;
+	reason: string;
+	createdAt: number;
+};
+
+type DesktopPermissionReply = "allowOnce" | "allowAlways" | "reject" | "timeout";
+
+type DesktopPermissionState = {
+	mode: DesktopPermissionMode;
+	grants: string[];
+};
+
+type PendingDesktopPermission = DesktopPermissionRequest & {
+	resolve: (reply: DesktopPermissionReply) => void;
+	timer: NodeJS.Timeout;
+	abortSignal?: AbortSignal;
+	abortHandler?: () => void;
+};
+
 type DesktopContextSelection =
 	| { type: "path"; path: string; name: string }
 	| { type: "image"; path: string; name: string; data: string; mimeType: string };
@@ -117,6 +143,8 @@ type DesktopState = {
 	isStreaming: boolean;
 	pendingMessageCount: number;
 	queuedPrompts: DesktopQueuedPromptSummary[];
+	permissionMode: DesktopPermissionMode;
+	permissionRequests: DesktopPermissionRequest[];
 	clarificationRequests: DesktopClarificationRequest[];
 	messageCount: number;
 	todos: DesktopTodo[];
@@ -181,6 +209,7 @@ const envSessionDir = "PI_CODING_AGENT_SESSION_DIR";
 const responseFeedbackEntryType = "cowork_response_feedback";
 const queuedPromptEntryType = "cowork_queued_prompt";
 const turnDiffEntryType = "cowork_turn_diff";
+const desktopPermissionStateEntryType = "cowork_permission_state";
 const desktopTodoStateEntryType = "cowork_todo_state";
 const turnSnapshotsBySessionId = new Map<string, DesktopTurnSnapshot>();
 const todosBySessionId = new Map<string, DesktopTodo[]>();
@@ -188,6 +217,10 @@ const queuedPromptsBySessionKey = new Map<string, DesktopQueuedPrompt[]>();
 const queuedPromptDrains = new Set<string>();
 const pendingClarificationsById = new Map<string, PendingDesktopClarification>();
 const clarificationTimeoutMs = 5 * 60_000;
+const permissionModesBySessionId = new Map<string, DesktopPermissionMode>();
+const permissionGrantsBySessionId = new Map<string, Set<string>>();
+const pendingPermissionsById = new Map<string, PendingDesktopPermission>();
+const permissionTimeoutMs = 5 * 60_000;
 let isQuitting = false;
 let pendingSessionSnapshot: NodeJS.Timeout | undefined;
 
@@ -210,7 +243,7 @@ async function getOrCreateDesktopServices(cwd: string): Promise<AgentSessionServ
 		cwd: resolvedCwd,
 		providerAllowlist,
 		resourceLoaderOptions: {
-			extensionFactories: [desktopTodoExtension, desktopClarificationExtension],
+			extensionFactories: [desktopPermissionExtension, desktopTodoExtension, desktopClarificationExtension],
 		},
 	})
 		.then((services) => {
@@ -525,6 +558,80 @@ function resolveClarificationRequest(id: string, resolution: DesktopClarificatio
 	return true;
 }
 
+function permissionModeForSession(sessionId: string): DesktopPermissionMode {
+	return permissionModesBySessionId.get(sessionId) ?? "bypassPermissions";
+}
+
+function isDesktopPermissionMode(value: unknown): value is DesktopPermissionMode {
+	return value === "ask" || value === "acceptEdits" || value === "bypassPermissions";
+}
+
+function hydrateDesktopPermissionState(session: AgentSession): void {
+	let mode: DesktopPermissionMode = "bypassPermissions";
+	let grants = new Set<string>();
+	for (const entry of session.sessionManager.getBranch()) {
+		if (entry.type !== "custom" || entry.customType !== desktopPermissionStateEntryType) continue;
+		const data = entry.data as Partial<DesktopPermissionState> | undefined;
+		if (isDesktopPermissionMode(data?.mode)) mode = data.mode;
+		if (Array.isArray(data?.grants)) {
+			grants = new Set(
+				data.grants
+					.filter((grant): grant is string => typeof grant === "string")
+					.map((grant) => grant.toLowerCase()),
+			);
+		}
+	}
+	permissionModesBySessionId.set(session.sessionId, mode);
+	permissionGrantsBySessionId.set(session.sessionId, grants);
+}
+
+function persistDesktopPermissionState(sessionId: string): void {
+	const session = getSession();
+	if (session.sessionId !== sessionId) return;
+	const data: DesktopPermissionState = {
+		mode: permissionModeForSession(sessionId),
+		grants: Array.from(permissionGrantsBySessionId.get(sessionId) ?? []).sort(),
+	};
+	session.sessionManager.appendCustomEntry(desktopPermissionStateEntryType, data);
+}
+
+function permissionRequestsForSession(sessionId: string): DesktopPermissionRequest[] {
+	return Array.from(pendingPermissionsById.values())
+		.filter((request) => request.sessionId === sessionId)
+		.map((request) => ({
+			id: request.id,
+			sessionId: request.sessionId,
+			toolCallId: request.toolCallId,
+			toolName: request.toolName,
+			toolInput: request.toolInput,
+			reason: request.reason,
+			createdAt: request.createdAt,
+		}));
+}
+
+function settlePermissionRequest(request: PendingDesktopPermission, reply: DesktopPermissionReply): void {
+	clearTimeout(request.timer);
+	if (request.abortSignal && request.abortHandler) {
+		request.abortSignal.removeEventListener("abort", request.abortHandler);
+	}
+	pendingPermissionsById.delete(request.id);
+	request.resolve(reply);
+	if (current?.session.sessionId === request.sessionId) publishState();
+}
+
+function resolvePermissionRequest(id: string, reply: DesktopPermissionReply): boolean {
+	const request = pendingPermissionsById.get(id);
+	if (!request) return false;
+	if (reply === "allowAlways") {
+		const grants = permissionGrantsBySessionId.get(request.sessionId) ?? new Set<string>();
+		grants.add(request.toolName.toLowerCase());
+		permissionGrantsBySessionId.set(request.sessionId, grants);
+		persistDesktopPermissionState(request.sessionId);
+	}
+	settlePermissionRequest(request, reply);
+	return true;
+}
+
 function isParsedDiff(value: unknown): value is ParsedDiff {
 	if (!value || typeof value !== "object") return false;
 	const candidate = value as Partial<ParsedDiff>;
@@ -622,6 +729,75 @@ const clarificationParametersSchema = {
 	required: ["question"],
 	additionalProperties: false,
 } as never;
+
+const desktopPermissionExtension: ExtensionFactory = (pi) => {
+	const autoAllowedTools = new Set(["ask_clarifying_question", "todoread", "todowrite"]);
+	pi.on("session_start", async (_event, context) => {
+		const sessionId = context.sessionManager.getSessionId();
+		let mode: DesktopPermissionMode = "bypassPermissions";
+		let grants = new Set<string>();
+		for (const entry of context.sessionManager.getBranch()) {
+			if (entry.type !== "custom" || entry.customType !== desktopPermissionStateEntryType) continue;
+			const data = entry.data as Partial<DesktopPermissionState> | undefined;
+			if (isDesktopPermissionMode(data?.mode)) mode = data.mode;
+			if (Array.isArray(data?.grants)) {
+				grants = new Set(
+					data.grants
+						.filter((grant): grant is string => typeof grant === "string")
+						.map((grant) => grant.toLowerCase()),
+				);
+			}
+		}
+		permissionModesBySessionId.set(sessionId, mode);
+		permissionGrantsBySessionId.set(sessionId, grants);
+	});
+	pi.on("tool_call", async (event, context) => {
+		const sessionId = context.sessionManager.getSessionId();
+		const mode = permissionModeForSession(sessionId);
+		const normalizedTool = event.toolName.toLowerCase();
+		if (
+			mode === "bypassPermissions" ||
+			autoAllowedTools.has(normalizedTool) ||
+			permissionGrantsBySessionId.get(sessionId)?.has(normalizedTool)
+		) {
+			return undefined;
+		}
+		const isEditTool = ["edit", "write", "multiedit", "apply_patch"].includes(normalizedTool);
+		if (mode === "acceptEdits" && isEditTool) return undefined;
+
+		const requestId = `permission-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		const reply = await new Promise<DesktopPermissionReply>((resolveReply) => {
+			const request: PendingDesktopPermission = {
+				id: requestId,
+				sessionId,
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				toolInput: event.input,
+				reason: mode === "acceptEdits" ? "This non-edit tool requires approval." : "This tool requires approval.",
+				createdAt: Date.now(),
+				resolve: resolveReply,
+				timer: setTimeout(() => {
+					const pending = pendingPermissionsById.get(requestId);
+					if (pending) settlePermissionRequest(pending, "timeout");
+				}, permissionTimeoutMs),
+			};
+			pendingPermissionsById.set(requestId, request);
+			if (context.signal) {
+				request.abortSignal = context.signal;
+				request.abortHandler = () => settlePermissionRequest(request, "reject");
+				if (context.signal.aborted) {
+					settlePermissionRequest(request, "reject");
+				} else {
+					context.signal.addEventListener("abort", request.abortHandler, { once: true });
+				}
+			}
+			if (current?.session.sessionId === sessionId) publishState();
+		});
+		if (reply === "reject") return { block: true, reason: "User denied this action." };
+		if (reply === "timeout") return { block: true, reason: "Permission request timed out." };
+		return undefined;
+	});
+};
 
 const desktopClarificationExtension: ExtensionFactory = (pi) => {
 	pi.registerTool({
@@ -880,6 +1056,8 @@ function serializeState(): DesktopState {
 		isStreaming: session.isStreaming,
 		pendingMessageCount: session.pendingMessageCount + getQueuedPrompts(session).length,
 		queuedPrompts: summarizeQueuedPrompts(session),
+		permissionMode: permissionModeForSession(session.sessionId),
+		permissionRequests: permissionRequestsForSession(session.sessionId),
 		clarificationRequests: clarificationRequestsForSession(session.sessionId),
 		messageCount: session.messages.length,
 		todos: todosBySessionId.get(session.sessionId) ?? [],
@@ -1014,6 +1192,7 @@ async function createDesktopSessionInner(
 		sessionStartEvent: { type: "session_start", reason: "startup" },
 	});
 	hydrateQueuedPrompts(current.session);
+	hydrateDesktopPermissionState(current.session);
 	hydrateLastTurnDiff(current.session);
 	hydrateDesktopTodos(current.session);
 	unsubscribeSession = current.session.subscribe(handleSessionEvent);
@@ -2212,6 +2391,33 @@ ipcMain.handle("pi:resolve-clarification", async (_event, id: string, answer: un
 ipcMain.handle("pi:reject-clarification", async (_event, id: string) => {
 	await ensureDesktopSession();
 	resolveClarificationRequest(id, { reason: "rejected" });
+	const next = serializeState();
+	send("pi:state", next);
+	return next;
+});
+ipcMain.handle("pi:set-permission-mode", async (_event, mode: unknown) => {
+	await ensureDesktopSession();
+	if (!isDesktopPermissionMode(mode)) {
+		throw new Error(`Unsupported permission mode: ${String(mode)}`);
+	}
+	const sessionId = getSession().sessionId;
+	permissionModesBySessionId.set(sessionId, mode);
+	persistDesktopPermissionState(sessionId);
+	if (mode === "bypassPermissions") {
+		for (const request of Array.from(pendingPermissionsById.values())) {
+			if (request.sessionId === sessionId) settlePermissionRequest(request, "allowOnce");
+		}
+	}
+	const next = serializeState();
+	send("pi:state", next);
+	return next;
+});
+ipcMain.handle("pi:resolve-permission", async (_event, id: string, reply: unknown) => {
+	await ensureDesktopSession();
+	if (reply !== "allowOnce" && reply !== "allowAlways" && reply !== "reject") {
+		throw new Error(`Unsupported permission reply: ${String(reply)}`);
+	}
+	resolvePermissionRequest(id, reply);
 	const next = serializeState();
 	send("pi:state", next);
 	return next;

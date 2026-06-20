@@ -3106,6 +3106,97 @@ body.resizing-panels {
 	color: var(--ink);
 }
 
+.permission-requests {
+	display: grid;
+	gap: 8px;
+	padding: 4px 4px 8px;
+}
+
+.permission-requests[hidden] {
+	display: none;
+}
+
+.permission-request {
+	display: grid;
+	grid-template-columns: 28px minmax(0, 1fr);
+	gap: 10px;
+	padding: 11px 12px;
+	border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--line));
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--warning) 7%, var(--secondary-bg));
+}
+
+.permission-request-icon {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--warning) 14%, transparent);
+	color: var(--warning);
+}
+
+.permission-request-icon svg {
+	width: 17px;
+	height: 17px;
+	fill: none;
+	stroke: currentColor;
+	stroke-linejoin: round;
+	stroke-width: 1.8;
+}
+
+.permission-request-copy {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+}
+
+.permission-request-copy strong {
+	color: var(--ink);
+	font-size: 13px;
+}
+
+.permission-request-copy > span {
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.permission-request-copy > code {
+	overflow: hidden;
+	margin-top: 3px;
+	padding: 5px 7px;
+	border-radius: 6px;
+	background: var(--panel-soft);
+	color: var(--secondary-ink);
+	font-family: var(--mono-font);
+	font-size: 11px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.permission-request-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 7px;
+}
+
+.permission-request-actions button {
+	min-height: 27px;
+	padding: 0 8px;
+	border-color: var(--line-strong);
+	background: var(--panel);
+	color: var(--secondary-ink);
+	font-size: 11px;
+	box-shadow: none;
+}
+
+.permission-request-actions button.primary {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: #061614;
+}
+
 .clarification-requests {
 	display: grid;
 	gap: 8px;
@@ -3732,6 +3823,45 @@ button.composer-context-item:focus-visible {
 	stroke-width: 2;
 }
 
+.composer-permission-wrap {
+	position: relative;
+	min-width: 0;
+}
+
+.composer-permission-mode {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-height: 26px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--faint);
+	font-size: 12px;
+	box-shadow: none;
+}
+
+.composer-permission-mode:hover:not(:disabled),
+.composer-permission-mode[aria-expanded="true"] {
+	background: var(--secondary-bg);
+	color: var(--ink);
+}
+
+.composer-permission-mode[data-permission-mode="bypassPermissions"] {
+	color: var(--warning);
+}
+
+.composer-permission-mode svg {
+	width: 15px;
+	height: 15px;
+	fill: none;
+	stroke: currentColor;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 1.8;
+}
+
 #composer-hint {
 	color: var(--faint);
 	font-size: 12px;
@@ -3942,6 +4072,11 @@ body[data-theme="dark"] #send {
 	min-width: 238px;
 }
 
+.permission-menu {
+	left: 0;
+	min-width: 286px;
+}
+
 .model-menu {
 	right: 0;
 	min-width: 286px;
@@ -4024,6 +4159,32 @@ body[data-theme="dark"] #send {
 	grid-template-columns: minmax(86px, auto) minmax(0, 1fr);
 	gap: 12px;
 	min-height: 38px;
+}
+
+.composer-menu .permission-menu-item {
+	position: relative;
+	grid-template-columns: minmax(0, 1fr) 16px;
+	gap: 2px 10px;
+	min-height: 48px;
+}
+
+.permission-menu-item > span,
+.permission-menu-item > small {
+	grid-column: 1;
+}
+
+.permission-menu-item > small {
+	color: var(--faint);
+	font-size: 11px;
+	font-weight: 430;
+}
+
+.permission-menu-item.selected::after {
+	grid-column: 2;
+	grid-row: 1 / span 2;
+	align-self: center;
+	color: var(--accent);
+	content: "✓";
 }
 
 .slash-command-name {

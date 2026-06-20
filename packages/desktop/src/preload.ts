@@ -25,6 +25,10 @@ const api = {
 	steerQueuedPrompt: (id: string) => ipcRenderer.invoke("pi:steer-queued-prompt", id),
 	resolveClarification: (id: string, answer: string) => ipcRenderer.invoke("pi:resolve-clarification", id, answer),
 	rejectClarification: (id: string) => ipcRenderer.invoke("pi:reject-clarification", id),
+	setPermissionMode: (mode: "ask" | "acceptEdits" | "bypassPermissions") =>
+		ipcRenderer.invoke("pi:set-permission-mode", mode),
+	resolvePermission: (id: string, reply: "allowOnce" | "allowAlways" | "reject") =>
+		ipcRenderer.invoke("pi:resolve-permission", id, reply),
 	abort: () => ipcRenderer.invoke("pi:abort"),
 	chooseContext: (kind: "files" | "folder" | "workspace") => ipcRenderer.invoke("pi:choose-context", kind),
 	setCwd: (cwd: string) => ipcRenderer.invoke("pi:set-cwd", cwd),
