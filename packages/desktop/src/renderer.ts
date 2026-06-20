@@ -103,6 +103,12 @@ type DesktopToolExecutionEndEvent = {
 	isError?: boolean;
 };
 
+type TurnWorkTrace = {
+	groups: HTMLElement[];
+	hasError: boolean;
+	notes: HTMLElement[];
+};
+
 type DesktopModel = {
 	provider: string;
 	id: string;
@@ -498,6 +504,7 @@ let rangeSelectStart: { filePath: string; oldLine?: number; newLine?: number; si
 const clarificationDraftsById = new Map<string, string>();
 const completedToolExecutions = new Map<string, { isError: boolean }>();
 const toolStackOpenStateByKey = new Map<string, boolean>();
+const expandedTurnWorkKeys = new Set<string>();
 const diffLineMetadata = new WeakMap<HTMLElement, { file: DiffFile; line: DiffLine }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
@@ -1896,6 +1903,13 @@ function toolStackKey(groups: HTMLElement[]): string {
 	);
 }
 
+function createTurnWorkNote(message: DesktopMessage): HTMLElement {
+	const note = document.createElement("div");
+	note.className = "turn-work-note";
+	note.append(renderContent(message));
+	return note;
+}
+
 function createCollapsedToolStack(groups: HTMLElement[], hasError: boolean): HTMLElement {
 	const details = document.createElement("details");
 	details.className = `tool-stack-group ${hasError ? "error" : ""}`;
@@ -2011,6 +2025,179 @@ function shouldCompactToolMessage(index: number, isActivelyStreaming: boolean, m
 	return !isActivelyStreaming && (!isComposerBusy || index < lastUserMessageIndex(messages));
 }
 
+function isIntermediateToolMessage(message: DesktopMessage): boolean {
+	return message.role === "assistant" && Boolean(message.toolCalls?.length) && !contentText(message).trim();
+}
+
+function createCompletedTurnWorkTraces(
+	messages: DesktopMessage[],
+	firstVisibleIndex: number,
+): {
+	skippedIndexes: Set<number>;
+	tracedToolIndexes: Set<number>;
+	tracesByFinalIndex: Map<number, TurnWorkTrace>;
+} {
+	const tracesByFinalIndex = new Map<number, TurnWorkTrace>();
+	const skippedIndexes = new Set<number>();
+	const tracedToolIndexes = new Set<number>();
+	for (let segmentStart = 0; segmentStart < messages.length; ) {
+		const userIndex = messages.findIndex((message, index) => index >= segmentStart && message.role === "user");
+		if (userIndex === -1) break;
+		const nextUserIndex = messages.findIndex((message, index) => index > userIndex && message.role === "user");
+		const segmentEnd = nextUserIndex === -1 ? messages.length : nextUserIndex;
+		if (isComposerBusy && nextUserIndex === -1) break;
+		let finalAssistantIndex = -1;
+		for (let index = userIndex + 1; index < segmentEnd; index++) {
+			const message = messages[index]!;
+			if (message.role === "assistant" && contentText(message).trim() && Number.isFinite(message.timestamp)) {
+				finalAssistantIndex = index;
+			}
+		}
+		const completionIndex = finalAssistantIndex === -1 ? nextUserIndex : finalAssistantIndex;
+		const userTimestamp = messages[userIndex]?.timestamp;
+		const segmentTimestamps = messages
+			.slice(userIndex + 1, segmentEnd)
+			.map((message) => message.timestamp)
+			.filter((timestamp): timestamp is number => Number.isFinite(timestamp));
+		const lastTurnTimestamp = segmentTimestamps.length > 0 ? Math.max(...segmentTimestamps) : undefined;
+		const hasDuration =
+			completionIndex >= firstVisibleIndex &&
+			Number.isFinite(userTimestamp) &&
+			Number.isFinite(lastTurnTimestamp) &&
+			lastTurnTimestamp - userTimestamp >= 1_000;
+		if (hasDuration) {
+			const groups: HTMLElement[] = [];
+			const notes: HTMLElement[] = [];
+			const candidateToolIndexes: number[] = [];
+			const candidateSkippedIndexes: number[] = [];
+			let hasError = false;
+			let hasIncompleteTool = false;
+			for (let index = userIndex + 1; index < segmentEnd; index++) {
+				if (index < firstVisibleIndex) continue;
+				const message = messages[index]!;
+				if (message.role !== "assistant") continue;
+				const isFinalAssistant = index === finalAssistantIndex;
+				if (!isFinalAssistant && contentText(message).trim()) {
+					notes.push(createTurnWorkNote(message));
+					candidateSkippedIndexes.push(index);
+				}
+				if (message.toolCalls?.length) {
+					const built = buildToolGroupsForMessage(message, index, messages, true);
+					groups.push(...built.groups);
+					hasError ||= built.hasError;
+					hasIncompleteTool ||= built.hasIncompleteTool;
+					candidateToolIndexes.push(index);
+				}
+				if (!isFinalAssistant && isIntermediateToolMessage(message)) candidateSkippedIndexes.push(index);
+			}
+			if ((groups.length > 0 || notes.length > 0) && !hasIncompleteTool) {
+				tracesByFinalIndex.set(completionIndex, { groups, hasError, notes });
+				for (const index of candidateToolIndexes) tracedToolIndexes.add(index);
+				for (const index of candidateSkippedIndexes) skippedIndexes.add(index);
+			}
+		}
+		segmentStart = segmentEnd;
+	}
+	return { skippedIndexes, tracedToolIndexes, tracesByFinalIndex };
+}
+
+function formatRunDuration(durationMs: number): string {
+	const totalSeconds = Math.max(1, Math.round(durationMs / 1_000));
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	if (minutes === 0) return `${seconds}s`;
+	if (seconds === 0) return `${minutes}m`;
+	return `${minutes}m ${seconds}s`;
+}
+
+function completedTurnDurations(messages: DesktopMessage[]): Map<number, number> {
+	const durations = new Map<number, number>();
+	for (let userIndex = 0; userIndex < messages.length; userIndex++) {
+		const userMessage = messages[userIndex]!;
+		const userTimestamp = userMessage.timestamp;
+		if (userMessage.role !== "user" || !Number.isFinite(userTimestamp)) continue;
+		const nextUserIndex = messages.findIndex((message, index) => index > userIndex && message.role === "user");
+		const segmentEnd = nextUserIndex === -1 ? messages.length : nextUserIndex;
+		if (isComposerBusy && nextUserIndex === -1) continue;
+		let finalAssistantIndex = -1;
+		for (let index = userIndex + 1; index < segmentEnd; index++) {
+			const message = messages[index]!;
+			if (message.role === "assistant" && contentText(message).trim() && Number.isFinite(message.timestamp)) {
+				finalAssistantIndex = index;
+			}
+		}
+		const completionIndex = finalAssistantIndex === -1 ? nextUserIndex : finalAssistantIndex;
+		if (completionIndex === -1) continue;
+		const segmentTimestamps = messages
+			.slice(userIndex + 1, segmentEnd)
+			.map((message) => message.timestamp)
+			.filter((timestamp): timestamp is number => Number.isFinite(timestamp));
+		const lastTurnTimestamp = segmentTimestamps.length > 0 ? Math.max(...segmentTimestamps) : undefined;
+		if (!Number.isFinite(lastTurnTimestamp)) continue;
+		const duration = lastTurnTimestamp - userTimestamp;
+		if (duration >= 1_000) durations.set(completionIndex, duration);
+		userIndex = segmentEnd - 1;
+	}
+	return durations;
+}
+
+function turnWorkKey(index: number): string {
+	return `${state?.sessionId ?? "session"}:${index}`;
+}
+
+function createTurnCompletion(index: number, duration: number, trace: TurnWorkTrace | undefined): HTMLElement {
+	const groups = trace?.groups ?? [];
+	const notes = trace?.notes ?? [];
+	const expandable = groups.length > 0 || notes.length > 0;
+	const boundary = document.createElement(expandable ? "details" : "div");
+	boundary.className = "turn-completion";
+	boundary.dataset.turnCompletionIndex = String(index);
+	const summary = document.createElement(expandable ? "summary" : "div");
+	summary.className = "turn-completion-summary";
+	const label = document.createElement("span");
+	label.textContent = `Worked for ${formatRunDuration(duration)}`;
+	summary.append(label);
+	if (expandable) {
+		const key = turnWorkKey(index);
+		(boundary as HTMLDetailsElement).open = expandedTurnWorkKeys.has(key);
+		const caret = document.createElement("span");
+		caret.className = "turn-completion-caret";
+		caret.setAttribute("aria-hidden", "true");
+		summary.append(caret);
+		const body = document.createElement("div");
+		body.className = "turn-work-body";
+		if (notes.length > 0) {
+			const noteList = document.createElement("div");
+			noteList.className = "turn-work-notes";
+			noteList.append(...notes);
+			body.append(noteList);
+		}
+		if (groups.length > 0) {
+			const tools = document.createElement("div");
+			tools.className = `tool-stack turn-work-tools ${trace?.hasError ? "error" : ""}`;
+			tools.append(...groups);
+			body.append(tools);
+		}
+		boundary.append(summary, body);
+		boundary.addEventListener("toggle", () => {
+			const details = boundary as HTMLDetailsElement;
+			if (details.open) expandedTurnWorkKeys.add(key);
+			else expandedTurnWorkKeys.delete(key);
+		});
+	} else {
+		boundary.append(summary);
+	}
+	return boundary;
+}
+
+function pruneOrphanTurnCompletions(): void {
+	for (const boundary of messagesEl.querySelectorAll(".turn-completion")) {
+		let next = boundary.nextElementSibling;
+		while (next?.classList?.contains("session-event-notice")) next = next.nextElementSibling;
+		if (!next || next.id === "streaming-indicator" || !next.classList?.contains("message")) boundary.remove();
+	}
+}
+
 function messageStableSignature(message: DesktopMessage, index: number, activeAssistantIndex: number): string {
 	const ignoreStreamingText = isComposerBusy && index === activeAssistantIndex;
 	const content: unknown[] = [];
@@ -2072,6 +2259,7 @@ function updateStableMessageRow(
 	index: number,
 	messages: DesktopMessage[],
 	compactCompleted = false,
+	toolsInTurnTrace = false,
 	showAssistantActions = false,
 ): void {
 	row.dataset.messageIndex = String(index);
@@ -2104,7 +2292,10 @@ function updateStableMessageRow(
 			return [call.id, call.name, call.input, result?.text, result?.isError, execution?.isError];
 		}),
 	);
-	if (row.dataset.toolSignature !== toolSignature) {
+	if (toolsInTurnTrace) {
+		row.querySelector(".tool-stack")?.remove();
+		row.dataset.toolSignature = toolSignature;
+	} else if (row.dataset.toolSignature !== toolSignature) {
 		row.querySelector(".tool-stack")?.remove();
 		const tools = renderToolStackForMessage(message, index, messages, compactCompleted);
 		if (tools) row.append(tools);
@@ -2257,9 +2448,18 @@ function patchStableStreamingRender(
 	activeAssistantIndex: number,
 ): void {
 	const indicator = document.getElementById("streaming-indicator");
+	const turnDurations = completedTurnDurations(messages);
+	const { skippedIndexes, tracedToolIndexes, tracesByFinalIndex } = createCompletedTurnWorkTraces(
+		messages,
+		firstVisibleIndex,
+	);
 	for (let index = firstVisibleIndex; index < messages.length; index++) {
 		const message = messages[index]!;
 		if (message.role === "toolResult") continue;
+		if (skippedIndexes.has(index)) {
+			messagesEl.querySelector(`[data-message-index="${index}"]`)?.remove();
+			continue;
+		}
 		if (!hasVisibleContent(message)) continue;
 		const isActivelyStreaming = isComposerBusy && index === activeAssistantIndex;
 		const showAssistantActions =
@@ -2273,6 +2473,10 @@ function patchStableStreamingRender(
 			row.dataset.messageIndex = String(index);
 			messagesEl.insertBefore(row, indicator);
 		}
+		const duration = turnDurations.get(index);
+		if (duration && !messagesEl.querySelector(`[data-turn-completion-index="${index}"]`)) {
+			messagesEl.insertBefore(createTurnCompletion(index, duration, tracesByFinalIndex.get(index)), row);
+		}
 		row.classList.toggle(
 			"last-response",
 			message.role === "assistant" && index === activeAssistantIndex && !isActivelyStreaming,
@@ -2283,6 +2487,7 @@ function patchStableStreamingRender(
 			index,
 			messages,
 			shouldCompactToolMessage(index, isActivelyStreaming, messages),
+			tracedToolIndexes.has(index),
 			showAssistantActions,
 		);
 	}
@@ -2292,6 +2497,7 @@ function patchStableStreamingRender(
 	syncStreamingIndicator();
 	renderSessionPlan(messages);
 	renderLastTurnArtifact();
+	pruneOrphanTurnCompletions();
 	if (shouldFollowMessages) scrollMessagesToBottom();
 }
 
@@ -2370,9 +2576,15 @@ function renderMessages(messages: DesktopMessage[]): void {
 		messagesEl.append(older);
 	}
 
+	const turnDurations = completedTurnDurations(messages);
+	const { skippedIndexes, tracedToolIndexes, tracesByFinalIndex } = createCompletedTurnWorkTraces(
+		messages,
+		firstVisibleIndex,
+	);
 	for (let index = firstVisibleIndex; index < messages.length; index++) {
 		const message = messages[index]!;
 		if (message.role === "toolResult") continue;
+		if (skippedIndexes.has(index)) continue;
 		if (!hasVisibleContent(message)) continue;
 		const isActivelyStreaming = isComposerBusy && index === lastAssistantIndex;
 		const showAssistantActions =
@@ -2386,18 +2598,23 @@ function renderMessages(messages: DesktopMessage[]): void {
 			"last-response",
 			message.role === "assistant" && index === lastAssistantIndex && !isActivelyStreaming,
 		);
-		const tools = renderToolStackForMessage(
-			message,
-			index,
-			messages,
-			shouldCompactToolMessage(index, isActivelyStreaming, messages),
-		);
+		const duration = turnDurations.get(index);
+		if (duration) messagesEl.append(createTurnCompletion(index, duration, tracesByFinalIndex.get(index)));
+		const tools = tracedToolIndexes.has(index)
+			? undefined
+			: renderToolStackForMessage(
+					message,
+					index,
+					messages,
+					shouldCompactToolMessage(index, isActivelyStreaming, messages),
+				);
 		if (tools) row.append(tools);
 		messagesEl.append(row);
 	}
 	syncStreamingIndicator();
 	renderSessionPlan(messages);
 	renderLastTurnArtifact();
+	pruneOrphanTurnCompletions();
 	if (followAfterRender) {
 		scrollMessagesToBottom();
 	} else {
