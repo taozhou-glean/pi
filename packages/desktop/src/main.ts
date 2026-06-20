@@ -215,6 +215,7 @@ type DesktopSessionInfo = {
 	modified: string;
 	messageCount: number;
 	firstMessage: string;
+	isRunning?: boolean;
 };
 
 let mainWindow: BrowserWindow | undefined;
@@ -533,6 +534,7 @@ function queuePrompt(prompt: DesktopPromptPayload): DesktopQueuedPrompt {
 	queuedPromptsBySessionKey.set(sessionQueueKey(session), [...getQueuedPrompts(session), queuedPrompt]);
 	persistQueuedPromptEntry({ action: "enqueue", prompt: queuedPrompt });
 	publishState();
+	sendSessionStatus(session);
 	return queuedPrompt;
 }
 
@@ -549,6 +551,7 @@ function removeQueuedPrompt(id: string): DesktopQueuedPrompt | undefined {
 	}
 	persistQueuedPromptEntry({ action: "remove", id });
 	publishState();
+	sendSessionStatus(session);
 	return queuedPrompt;
 }
 
@@ -940,6 +943,7 @@ function serializeSessionInfo(session: SessionInfo): DesktopSessionInfo {
 		modified: session.modified.toISOString(),
 		messageCount: session.messageCount,
 		firstMessage: session.firstMessage,
+		isRunning: current?.session.sessionId === session.id ? isSessionRunning(current.session) : undefined,
 	};
 }
 
@@ -1138,6 +1142,19 @@ function publishSessionSnapshot(): void {
 	publishState();
 }
 
+function isSessionRunning(session = getSession()): boolean {
+	return session.isStreaming || session.pendingMessageCount > 0 || getQueuedPrompts(session).length > 0;
+}
+
+function sendSessionStatus(session = getSession(), isRunning = isSessionRunning(session)): void {
+	send("pi:event", {
+		type: "desktop_session_status",
+		path: session.sessionFile,
+		id: session.sessionId,
+		isRunning,
+	});
+}
+
 function scheduleSessionSnapshot(): void {
 	if (pendingSessionSnapshot) return;
 	pendingSessionSnapshot = setTimeout(() => {
@@ -1156,6 +1173,15 @@ function flushSessionSnapshot(): void {
 
 function handleSessionEvent(event: AgentSessionEvent): void {
 	send("pi:event", event);
+	if (
+		event.type === "agent_start" ||
+		event.type === "agent_end" ||
+		event.type === "queue_update" ||
+		event.type === "tool_execution_start" ||
+		event.type === "tool_execution_end"
+	) {
+		sendSessionStatus();
+	}
 	if (event.type === "agent_end" && !event.willRetry) {
 		captureLastTurnDiff().catch(() => {});
 		setTimeout(() => {
