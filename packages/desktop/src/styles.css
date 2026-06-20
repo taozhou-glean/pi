@@ -249,6 +249,61 @@ button:disabled {
 	--chat-width: 760px;
 }
 
+.startup-loading {
+	position: fixed;
+	inset: 0;
+	z-index: 500;
+	display: grid;
+	place-items: center;
+	background: var(--paper);
+}
+
+.startup-loading[hidden] {
+	display: none;
+}
+
+.startup-loading-panel {
+	display: grid;
+	justify-items: center;
+	gap: 10px;
+	width: min(320px, calc(100vw - 48px));
+	padding: 24px;
+	color: var(--ink);
+	text-align: center;
+}
+
+.startup-spinner {
+	width: 28px;
+	height: 28px;
+	border: 3px solid color-mix(in srgb, var(--muted) 24%, transparent);
+	border-top-color: var(--accent-strong);
+	border-radius: 50%;
+	animation: startup-spin 800ms linear infinite;
+}
+
+.startup-loading-title {
+	font-size: 15px;
+	font-weight: 760;
+}
+
+.startup-loading-copy {
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+@keyframes startup-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.startup-spinner {
+		animation: none;
+	}
+}
+
 .sidebar {
 	display: flex;
 	flex-direction: column;
@@ -638,6 +693,38 @@ body[data-platform="mac"] .sidebar-control-hit-area {
 .settings-popover-actions button:focus-visible {
 	background: var(--nav-control-bg);
 	border-color: var(--nav-control-border);
+}
+
+.sidebar-feedback-link {
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	flex: 0 0 auto;
+	height: 32px;
+	min-height: 32px;
+	margin-top: 8px;
+	padding: 0 6px;
+	border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--nav-control-border));
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--accent) 12%, transparent);
+	color: var(--nav-text);
+	font-size: 12.5px;
+	font-weight: 560;
+	text-decoration: none;
+	box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.sidebar-feedback-link:hover,
+.sidebar-feedback-link:focus-visible {
+	background: color-mix(in srgb, var(--accent) 18%, transparent);
+	border-color: color-mix(in srgb, var(--accent) 48%, var(--nav-control-border));
+	color: var(--nav-text);
+}
+
+.sidebar-feedback-link > span:not(.button-icon) {
+	flex: 1;
+	min-width: 0;
 }
 
 .settings-action-icon {
@@ -2817,6 +2904,79 @@ textarea {
 	border-top: 0;
 	border-radius: 0 0 22px 22px;
 	background: transparent;
+}
+
+.composer-context {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	min-height: 34px;
+	padding: 0 14px;
+	border-top: 1px solid var(--line);
+	color: var(--faint);
+	font-size: 11px;
+}
+
+.composer-context[hidden] {
+	display: none;
+}
+
+.composer-context-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	padding: 3px 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	box-shadow: none;
+}
+
+button.composer-context-item:hover:not(:disabled),
+button.composer-context-item:focus-visible {
+	color: var(--ink);
+	transform: none;
+}
+
+.composer-context-item svg {
+	flex: none;
+	width: 14px;
+	height: 14px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.7;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.composer-context-item span:not(.composer-context-caret) {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.composer-context-caret {
+	flex: none;
+	width: 5px;
+	height: 5px;
+	margin: -2px 2px 0 0;
+	border-right: 1.5px solid currentColor;
+	border-bottom: 1.5px solid currentColor;
+	transform: rotate(45deg);
+}
+
+.composer-context-separator {
+	flex: none;
+	width: 1px;
+	height: 13px;
+	background: var(--line-strong);
+}
+
+.composer-branch-context {
+	flex: 1;
 }
 
 .composer-tools {

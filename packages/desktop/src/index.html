@@ -80,6 +80,24 @@
 					<div id="session-list" class="session-list"></div>
 				</section>
 
+				<a
+					class="sidebar-feedback-link"
+					href="https://askscio.slack.com/archives/C0BBJSG7J9K"
+					target="_blank"
+					rel="noreferrer"
+					title="Share feedback in Slack"
+				>
+					<span class="button-icon" aria-hidden="true">
+						<svg viewBox="0 0 24 24">
+							<path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.5A8 8 0 1 1 21 12Z" />
+							<path d="M8 12h.01" />
+							<path d="M12 12h.01" />
+							<path d="M16 12h.01" />
+						</svg>
+					</span>
+					<span>Feedback</span>
+				</a>
+
 				<div class="sidebar-settings">
 					<button
 						id="sidebar-settings-trigger"
@@ -291,6 +309,33 @@
 								</svg>
 							</button>
 						</div>
+						<div id="composer-context" class="composer-context" hidden>
+							<button id="composer-workspace" class="composer-context-item" type="button" title="Change workspace">
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path d="M3 6h7l2 2h9v10H3z" />
+								</svg>
+								<span id="composer-workspace-name">Workspace</span>
+								<span class="composer-context-caret" aria-hidden="true"></span>
+							</button>
+							<span class="composer-context-separator" aria-hidden="true"></span>
+							<span class="composer-context-item">
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<rect x="3" y="4" width="18" height="13" rx="2" />
+									<path d="M8 21h8M12 17v4" />
+								</svg>
+								<span>Work locally</span>
+							</span>
+							<span class="composer-context-separator" aria-hidden="true"></span>
+							<span class="composer-context-item composer-branch-context">
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<circle cx="6" cy="5" r="2" />
+									<circle cx="6" cy="19" r="2" />
+									<circle cx="18" cy="7" r="2" />
+									<path d="M6 7v10M8 17c6 0 8-3 8-8" />
+								</svg>
+								<span id="composer-branch-name">Branch</span>
+							</span>
+						</div>
 					</div>
 					</form>
 				</main>
@@ -426,6 +471,13 @@
 						webpreferences="allowRunningInsecureContent=no"
 					></webview>
 				</section>
+			</div>
+			<div id="startup-loading" class="startup-loading" role="status" aria-live="polite">
+				<div class="startup-loading-panel">
+					<div class="startup-spinner" aria-hidden="true"></div>
+					<div class="startup-loading-title">Loading Pi Desktop</div>
+					<div class="startup-loading-copy">Starting the local agent session...</div>
+				</div>
 			</div>
 		</div>
 		<script type="module" src="./renderer.js"></script>

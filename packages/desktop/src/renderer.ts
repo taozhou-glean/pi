@@ -168,6 +168,7 @@ const toggleLeftPanelButtons = Array.from(document.querySelectorAll<HTMLButtonEl
 const toggleRightPanelButton = document.querySelector<HTMLButtonElement>("#toggle-right-panel")!;
 const toggleBottomPanelButton = document.querySelector<HTMLButtonElement>("#toggle-bottom-panel")!;
 const bottomPanel = document.querySelector<HTMLDivElement>("#bottom-panel")!;
+const startupLoading = document.querySelector<HTMLDivElement>("#startup-loading")!;
 const terminalContainer = document.querySelector<HTMLDivElement>("#terminal-container")!;
 const rightTerminalContainer = document.querySelector<HTMLDivElement>("#right-terminal-container")!;
 const terminalCloseButton = document.querySelector<HTMLButtonElement>("#terminal-close")!;
@@ -223,6 +224,10 @@ const composerAddButton = document.querySelector<HTMLButtonElement>("#composer-a
 const composerAddMenu = document.querySelector<HTMLDivElement>("#composer-add-menu")!;
 const composerModelButton = document.querySelector<HTMLButtonElement>("#composer-model")!;
 const composerModelMenu = document.querySelector<HTMLDivElement>("#composer-model-menu")!;
+const composerContext = document.querySelector<HTMLDivElement>("#composer-context")!;
+const composerWorkspaceButton = document.querySelector<HTMLButtonElement>("#composer-workspace")!;
+const composerWorkspaceName = document.querySelector<HTMLSpanElement>("#composer-workspace-name")!;
+const composerBranchName = document.querySelector<HTMLSpanElement>("#composer-branch-name")!;
 const runState = document.querySelector<HTMLDivElement>("#run-state")!;
 const workspaceName = document.querySelector<HTMLElement>("#workspace-name")!;
 const sessionShortId = document.querySelector<HTMLElement>("#session-short-id")!;
@@ -496,6 +501,19 @@ function shortId(id?: string): string {
 function modelDisplay(state: DesktopState): string {
 	if (!state.model) return "No model selected";
 	return `${state.model.id} · ${state.thinkingLevel ?? "off"}`;
+}
+
+function renderComposerContext(git?: GitStatus): void {
+	if (!state || state.authRequired) {
+		composerContext.hidden = true;
+		return;
+	}
+	composerContext.hidden = false;
+	composerWorkspaceName.textContent = basename(state.cwd);
+	composerWorkspaceButton.title = state.cwd;
+	const branch = git?.isRepo ? git.branch || "detached" : "No git branch";
+	composerBranchName.textContent = branch;
+	composerBranchName.title = branch;
 }
 
 function initialsForName(value: unknown): string {
@@ -1476,6 +1494,8 @@ function renderState(next: DesktopState): void {
 		? "Using shared Pi auth and model config"
 		: "Use pi /login or configure ~/.pi/agent";
 	workspaceName.textContent = basename(next.cwd);
+	composerWorkspaceName.textContent = basename(next.cwd);
+	composerWorkspaceButton.title = next.cwd;
 	sessionShortId.textContent = shortId(next.sessionId);
 	messageCount.textContent = String(next.messageCount);
 	queueCount.textContent = String(next.pendingMessageCount);
@@ -1486,6 +1506,7 @@ function renderState(next: DesktopState): void {
 		<div><span>Model</span><strong>${requiresAuth ? "Login required" : model}</strong></div>
 	`;
 	setBusy(next.isStreaming);
+	renderComposerContext();
 
 	const selectedValue = next.model ? `${next.model.provider}:${next.model.id}` : "";
 	if (modelSelect.value !== selectedValue) {
@@ -1948,6 +1969,7 @@ function createSessionListItem(session: DesktopSessionInfo, options: { archived?
 }
 
 function renderGit(status: GitStatus): void {
+	renderComposerContext(status);
 	if (!status.isRepo) {
 		gitBranch.textContent = "Not a git repository";
 		gitStatus.textContent = status.error || "";
@@ -3129,6 +3151,21 @@ addProjectButton.addEventListener("click", async () => {
 	}
 });
 
+composerWorkspaceButton.addEventListener("click", async () => {
+	try {
+		const selections = await window.piDesktop.chooseContext("folder");
+		const folder = selections.find((selection): selection is Extract<DesktopContextSelection, { type: "path" }> => {
+			return selection.type === "path";
+		});
+		if (!folder) return;
+		renderState(await window.piDesktop.setCwd(folder.path));
+		await refreshAfterSessionChange();
+		promptInput.focus();
+	} catch (error) {
+		showError(error);
+	}
+});
+
 settingsLogoutButton.addEventListener("click", async () => {
 	try {
 		closeSettingsPopover();
@@ -3172,14 +3209,18 @@ window.piDesktop.onEvent((event) => {
 });
 
 async function boot(): Promise<void> {
-	applyLayoutState();
-	syncResponsiveLayout();
-	syncRightPanelContent();
-	syncBottomPanelContent();
-	applyTheme();
-	renderState(await window.piDesktop.init());
-	void refreshCurrentUser();
-	await refreshAfterSessionChange();
+	try {
+		applyLayoutState();
+		syncResponsiveLayout();
+		syncRightPanelContent();
+		syncBottomPanelContent();
+		applyTheme();
+		renderState(await window.piDesktop.init());
+		void refreshCurrentUser();
+		await refreshAfterSessionChange();
+	} finally {
+		startupLoading.hidden = true;
+	}
 }
 
 boot().catch(showError);
