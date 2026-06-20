@@ -1127,7 +1127,7 @@ function closeSlashCommandMenu(): void {
 function selectSlashCommand(command: SlashCommand): void {
 	promptInput.value =
 		command.usage.includes("<") || command.usage.includes("[") ? `/${command.name} ` : `/${command.name}`;
-	promptInput.focus();
+	focusComposer();
 	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
 	closeSlashCommandMenu();
 	autosizePrompt();
@@ -1814,7 +1814,7 @@ function createAssistantMessageActions(message: DesktopMessage): HTMLElement {
 				shouldFollowMessages = true;
 				visibleMessageLimit = messagePageSize;
 				await refreshAfterSessionChange();
-				promptInput.focus();
+				focusComposer();
 			} catch (error) {
 				forkButton.disabled = false;
 				forkButton.classList.remove("loading");
@@ -3003,7 +3003,7 @@ function renderModels(): void {
 			try {
 				closeComposerMenus();
 				renderState(await window.piDesktop.setThinkingLevel(value));
-				promptInput.focus();
+				focusComposer();
 			} catch (error) {
 				showError(error);
 			}
@@ -3043,7 +3043,7 @@ function renderModels(): void {
 				modelSelect.value = option.value;
 				closeComposerMenus();
 				renderState(await window.piDesktop.setModel(model.provider, model.id));
-				promptInput.focus();
+				focusComposer();
 			} catch (error) {
 				showError(error);
 			}
@@ -3142,7 +3142,7 @@ function renderSessionList(): void {
 			} catch (error) {
 				showError(error);
 			} finally {
-				promptInput.focus();
+				focusComposer();
 			}
 		});
 		const collapseIcon = document.createElement("span");
@@ -3388,7 +3388,7 @@ function draftEnvironmentAction(text: string): void {
 	autosizePrompt();
 	syncSendButtonState();
 	setEnvironmentPopoverOpen(false);
-	promptInput.focus();
+	focusComposer();
 	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
 }
 
@@ -3604,7 +3604,10 @@ function renderDiffFile(file: DiffFile): HTMLElement {
 	header.className = "diff-file-header";
 	const name = document.createElement("span");
 	name.className = "diff-file-name";
-	name.textContent = file.newPath;
+	const icon = document.createElement("span");
+	icon.className = "file-icon";
+	icon.textContent = fileStatusIcon(file.status);
+	name.append(icon, document.createTextNode(file.newPath));
 	const stats = document.createElement("span");
 	stats.className = "diff-file-stats";
 	stats.innerHTML = `<span class="add-count">+${file.additions}</span> <span class="del-count">-${file.deletions}</span>`;
@@ -3616,6 +3619,23 @@ function renderDiffFile(file: DiffFile): HTMLElement {
 	}
 
 	return section;
+}
+
+function fileStatusIcon(status: DiffFile["status"]): string {
+	switch (status) {
+		case "added":
+			return "+";
+		case "deleted":
+			return "-";
+		case "renamed":
+			return ">";
+		default:
+			return "o";
+	}
+}
+
+function escapeHtml(str: string): string {
+	return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function renderDiffHunk(file: DiffFile, hunk: DiffHunk): HTMLElement {
@@ -4003,7 +4023,7 @@ function restoreQueuedPrompt(
 	renderComposerAttachments();
 	autosizePrompt();
 	syncSendButtonState();
-	promptInput.focus();
+	focusComposer();
 	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
 }
 
@@ -4284,13 +4304,13 @@ async function refreshAfterSessionChange(): Promise<void> {
 async function startNewSession(): Promise<void> {
 	renderState(await window.piDesktop.newSession());
 	await refreshAfterSessionChange();
-	promptInput.focus();
+	focusComposer();
 }
 
 async function switchToSession(sessionPath: string): Promise<void> {
 	if (switchingSessionPath) return;
 	if (sessionPath === state?.sessionFile) {
-		promptInput.focus();
+		focusComposer();
 		return;
 	}
 	switchingSessionPath = sessionPath;
@@ -4302,7 +4322,7 @@ async function switchToSession(sessionPath: string): Promise<void> {
 		renderSessionList();
 		renderMessages(await window.piDesktop.getMessages());
 		messagesEl.classList.remove("loading-session");
-		promptInput.focus();
+		focusComposer();
 		refreshModels().catch(showError);
 		refreshGit().catch(showError);
 	} finally {
@@ -4461,6 +4481,20 @@ function showDesktopMessage(labelText: string, text: string, variant: "notice" |
 	messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+function focusComposer(): void {
+	const focus = () => {
+		if (state?.authRequired || composer.hidden) return;
+		closeComposerMenus();
+		closeSettingsPopover();
+		promptInput.focus();
+		const cursor = promptInput.value.length;
+		promptInput.setSelectionRange(cursor, cursor);
+	};
+	focus();
+	requestAnimationFrame(focus);
+	setTimeout(focus, 50);
+}
+
 function autosizePrompt(): void {
 	promptInput.style.height = "auto";
 	promptInput.style.height = `${Math.min(promptInput.scrollHeight, 220)}px`;
@@ -4584,7 +4618,7 @@ function renderComposerAttachments(): void {
 			closeImagePreview();
 			renderComposerAttachments();
 			syncSendButtonState();
-			promptInput.focus();
+			focusComposer();
 		});
 
 		item.append(preview, remove);
@@ -4618,7 +4652,7 @@ function renderComposerAttachments(): void {
 			composerFiles = composerFiles.filter((candidate) => candidate.id !== attachment.id);
 			renderComposerAttachments();
 			syncSendButtonState();
-			promptInput.focus();
+			focusComposer();
 		});
 
 		item.append(icon, meta, remove);
@@ -4724,7 +4758,7 @@ function insertComposerContext(paths: string[]): void {
 	const current = promptInput.value.trimEnd();
 	promptInput.value = current ? `${current}\n\n${block}\n` : `${block}\n`;
 	autosizePrompt();
-	promptInput.focus();
+	focusComposer();
 	promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
 }
 
@@ -5630,7 +5664,7 @@ document.addEventListener("keydown", (event) => {
 		closeComposerMenus();
 		closeSessionMenu();
 		closeSettingsPopover();
-		promptInput.focus();
+		focusComposer();
 	}
 });
 
@@ -5681,7 +5715,7 @@ sessionSearchInput.addEventListener("keydown", (event) => {
 	event.stopPropagation();
 	sessionSearchInput.value = "";
 	renderSessionList();
-	promptInput.focus();
+	focusComposer();
 });
 
 addProjectButton.addEventListener("click", async () => {
@@ -5694,7 +5728,7 @@ addProjectButton.addEventListener("click", async () => {
 		renderState(await window.piDesktop.setCwd(folder.path));
 		renderState(await window.piDesktop.newSession());
 		await refreshAfterSessionChange();
-		promptInput.focus();
+		focusComposer();
 	} catch (error) {
 		showError(error);
 	}
@@ -5709,7 +5743,7 @@ composerWorkspaceButton.addEventListener("click", async () => {
 		if (!folder) return;
 		renderState(await window.piDesktop.setCwd(folder.path));
 		await refreshAfterSessionChange();
-		promptInput.focus();
+		focusComposer();
 	} catch (error) {
 		showError(error);
 	}

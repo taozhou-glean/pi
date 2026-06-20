@@ -583,11 +583,21 @@ body[data-theme="dark"] .environment-popover {
 }
 
 .diff-file-name {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	color: var(--ink);
 	font-weight: 650;
+}
+
+.diff-file-name .file-icon {
+	flex: 0 0 auto;
+	color: var(--faint);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 11px;
 }
 
 .diff-file-stats {
