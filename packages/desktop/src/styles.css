@@ -3978,6 +3978,37 @@ details.turn-completion > .turn-completion-summary {
 	transform: rotate(45deg);
 }
 
+.session-event-notice {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	width: min(100%, var(--chat-width));
+	min-height: 28px;
+	margin: 4px auto;
+	color: var(--faint);
+	font-size: 11px;
+}
+
+.session-event-notice-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 999px;
+	background: var(--faint);
+}
+
+.session-event-notice.running .session-event-notice-dot {
+	background: var(--warning);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.session-event-notice.error {
+	color: #d95656;
+}
+
+.session-event-notice.error .session-event-notice-dot {
+	background: #d95656;
+}
+
 .composer {
 	grid-row: 3;
 	display: flex;

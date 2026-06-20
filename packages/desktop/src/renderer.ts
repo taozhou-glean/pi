@@ -128,6 +128,14 @@ type DesktopSessionInfo = {
 
 type SessionStatus = "running" | "finished";
 
+type SessionNoticeStatus = "running" | "complete" | "error";
+
+type SessionNotice = {
+	key: string;
+	text: string;
+	status: SessionNoticeStatus;
+};
+
 type GitStatus = {
 	isRepo: boolean;
 	branch?: string;
@@ -509,6 +517,7 @@ const completedToolExecutions = new Map<string, { isError: boolean }>();
 const toolStackOpenStateByKey = new Map<string, boolean>();
 const expandedTurnWorkKeys = new Set<string>();
 const sessionStatusByKey = new Map<string, SessionStatus>();
+const sessionNoticesBySessionId = new Map<string, SessionNotice[]>();
 const diffLineMetadata = new WeakMap<HTMLElement, { file: DiffFile; line: DiffLine }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
@@ -984,6 +993,7 @@ const slashCommands: SlashCommand[] = [
 		usage: "/compact [instructions]",
 		description: "Compact the current chat context",
 		run: async (args) => {
+			upsertSessionNotice("compaction", "Preparing more context · compacting...", "running");
 			renderState(await window.piDesktop.compact(args));
 			renderMessages(await window.piDesktop.getMessages());
 		},
@@ -2219,11 +2229,36 @@ function createTurnCompletion(index: number, duration: number, trace: TurnWorkTr
 	return boundary;
 }
 
+function upsertSessionNotice(key: string, text: string, status: SessionNoticeStatus = "complete"): void {
+	if (!state?.sessionId) return;
+	const notices = sessionNoticesBySessionId.get(state.sessionId) ?? [];
+	const next = notices.filter((notice) => notice.key !== key);
+	next.push({ key, text, status });
+	sessionNoticesBySessionId.set(state.sessionId, next.slice(-3));
+	renderSessionNotices();
+}
+
 function pruneOrphanTurnCompletions(): void {
 	for (const boundary of messagesEl.querySelectorAll(".turn-completion")) {
 		let next = boundary.nextElementSibling;
 		while (next?.classList?.contains("session-event-notice")) next = next.nextElementSibling;
 		if (!next || next.id === "streaming-indicator" || !next.classList?.contains("message")) boundary.remove();
+	}
+}
+
+function renderSessionNotices(): void {
+	for (const notice of messagesEl.querySelectorAll(".session-event-notice")) notice.remove();
+	const notices = sessionNoticesBySessionId.get(state?.sessionId ?? "") ?? [];
+	const indicator = document.getElementById("streaming-indicator");
+	for (const notice of notices) {
+		const row = document.createElement("div");
+		row.className = `session-event-notice ${notice.status}`;
+		const dot = document.createElement("span");
+		dot.className = "session-event-notice-dot";
+		const label = document.createElement("span");
+		label.textContent = notice.text;
+		row.append(dot, label);
+		messagesEl.insertBefore(row, indicator);
 	}
 }
 
@@ -2524,6 +2559,7 @@ function patchStableStreamingRender(
 	renderedFirstVisibleIndex = firstVisibleIndex;
 	renderedMessageCount = messages.length;
 	syncStreamingIndicator();
+	renderSessionNotices();
 	renderSessionPlan(messages);
 	renderLastTurnArtifact();
 	pruneOrphanTurnCompletions();
@@ -2641,6 +2677,7 @@ function renderMessages(messages: DesktopMessage[]): void {
 		messagesEl.append(row);
 	}
 	syncStreamingIndicator();
+	renderSessionNotices();
 	renderSessionPlan(messages);
 	renderLastTurnArtifact();
 	pruneOrphanTurnCompletions();
@@ -5461,6 +5498,7 @@ composerCompactContext.addEventListener("click", async () => {
 	if (composerCompactContext.disabled) return;
 	closeComposerMenus();
 	setBusy(true);
+	upsertSessionNotice("compaction", "Preparing more context · compacting...", "running");
 	try {
 		renderState(await window.piDesktop.compact());
 		renderMessages(await window.piDesktop.getMessages());
@@ -5692,7 +5730,7 @@ window.piDesktop.onState(renderState);
 window.piDesktop.onMessages(renderMessages);
 window.piDesktop.onEnvironmentStatus(renderEnvironment);
 window.piDesktop.onEvent((event) => {
-	const typed = event as { type?: string } & DesktopToolExecutionEndEvent;
+	const typed = event as { type?: string; aborted?: boolean; errorMessage?: string } & DesktopToolExecutionEndEvent;
 	if (typed.type === "desktop_environment_status") {
 		const status = (event as { status?: DesktopEnvironmentStatus }).status;
 		if (status) renderEnvironment(status);
@@ -5707,6 +5745,14 @@ window.piDesktop.onEvent((event) => {
 			refreshSessions(),
 			!environmentPopover.hidden ? refreshEnvironment() : Promise.resolve(),
 		]).catch(showError);
+	}
+	if (typed.type === "compaction_end") {
+		const text = typed.aborted
+			? "Context compaction stopped"
+			: typed.errorMessage
+				? `Context compaction failed · ${typed.errorMessage}`
+				: "Context compacted";
+		upsertSessionNotice("compaction", text, typed.aborted || typed.errorMessage ? "error" : "complete");
 	}
 });
 
