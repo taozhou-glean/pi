@@ -11,7 +11,8 @@
 		"build": "node scripts/build.mjs",
 		"dev": "node scripts/build.mjs --watch",
 		"smoke": "npm run build && PI_DESKTOP_SMOKE=1 electron .",
-		"start": "npm run build && electron ."
+		"start": "npm run build && electron .",
+		"test": "vitest --run src/*.spec.ts"
 	},
 	"dependencies": {
 		"@earendil-works/pi-coding-agent": "^0.79.5",
@@ -20,6 +21,7 @@
 		"node-pty": "1.0.0"
 	},
 	"devDependencies": {
-		"electron": "39.8.10"
+		"electron": "39.8.10",
+		"vitest": "3.2.4"
 	}
 }
