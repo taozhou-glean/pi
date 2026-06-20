@@ -84,8 +84,15 @@ type DesktopState = {
 	availableModelCount: number;
 	isStreaming: boolean;
 	pendingMessageCount: number;
+	queuedPrompts: DesktopQueuedPrompt[];
 	messageCount: number;
 	todos: DesktopTodo[];
+};
+
+type DesktopQueuedPrompt = {
+	id: string;
+	type: "steer" | "followUp";
+	text: string;
 };
 
 type DesktopTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
@@ -638,6 +645,16 @@ function serializeState(): DesktopState {
 		availableModelCount,
 		isStreaming: session.isStreaming,
 		pendingMessageCount: session.pendingMessageCount,
+		queuedPrompts: [
+			...session
+				.getSteeringMessages()
+				.map((text, index) => ({ id: `steer:${index}`, type: "steer" as const, text })),
+			...session.getFollowUpMessages().map((text, index) => ({
+				id: `followUp:${index}`,
+				type: "followUp" as const,
+				text,
+			})),
+		],
 		messageCount: session.messages.length,
 		todos: todosBySessionId.get(session.sessionId) ?? [],
 	};

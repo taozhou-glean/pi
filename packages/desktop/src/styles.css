@@ -3044,6 +3044,48 @@ body.resizing-panels {
 	display: none;
 }
 
+.queued-prompts {
+	display: grid;
+	gap: 8px;
+	padding: 4px 4px 8px;
+}
+
+.queued-prompts[hidden] {
+	display: none;
+}
+
+.queued-prompt {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	align-items: center;
+	gap: 10px;
+	padding: 8px 10px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--secondary-bg);
+}
+
+.queued-prompt-meta {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+
+.queued-prompt-label {
+	color: var(--faint);
+	font-size: 11px;
+	font-weight: 680;
+	text-transform: uppercase;
+}
+
+.queued-prompt-preview {
+	overflow: hidden;
+	color: var(--ink);
+	font-size: 13px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .review-comments-badge {
 	display: inline-flex;
 	align-items: center;

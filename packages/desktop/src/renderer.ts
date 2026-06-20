@@ -20,8 +20,15 @@ type DesktopState = {
 	availableModelCount: number;
 	isStreaming: boolean;
 	pendingMessageCount: number;
+	queuedPrompts: DesktopQueuedPrompt[];
 	messageCount: number;
 	todos: DesktopTodo[];
+};
+
+type DesktopQueuedPrompt = {
+	id: string;
+	type: "steer" | "followUp";
+	text: string;
 };
 
 type DesktopTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
@@ -343,6 +350,10 @@ const slashCommandMenu = document.createElement("div");
 slashCommandMenu.className = "composer-menu slash-command-menu";
 slashCommandMenu.hidden = true;
 promptInput.before(slashCommandMenu);
+const queuedPromptList = document.createElement("div");
+queuedPromptList.className = "queued-prompts";
+queuedPromptList.hidden = true;
+promptInput.before(queuedPromptList);
 const reviewCommentsBadge = document.createElement("div");
 reviewCommentsBadge.id = "review-comments-badge";
 reviewCommentsBadge.className = "review-comments-badge";
@@ -1794,6 +1805,7 @@ function renderState(next: DesktopState): void {
 	sessionShortId.textContent = shortId(next.sessionId);
 	messageCount.textContent = String(next.messageCount);
 	queueCount.textContent = String(next.pendingMessageCount);
+	renderQueuedPrompts();
 	contextSummary.innerHTML = `
 		<div><span>Working directory</span><strong>${next.cwd}</strong></div>
 		<div><span>Session store</span><strong>${next.sessionDir ?? "Default Pi session store"}</strong></div>
@@ -2786,6 +2798,32 @@ function markDraftCommentsSubmitted(): void {
 	renderReviewCommentsBadge();
 	syncSendButtonState();
 	if (reviewDiffData && layoutState.rightTab === "review") renderReview(reviewDiffData);
+}
+
+function queuedPromptPreview(prompt: DesktopQueuedPrompt): string {
+	const text = prompt.text.trim();
+	return text || "Queued message";
+}
+
+function renderQueuedPrompts(): void {
+	const queuedPrompts = state?.queuedPrompts ?? [];
+	queuedPromptList.replaceChildren();
+	queuedPromptList.hidden = queuedPrompts.length === 0;
+	for (const prompt of queuedPrompts) {
+		const item = document.createElement("div");
+		item.className = "queued-prompt";
+		const meta = document.createElement("div");
+		meta.className = "queued-prompt-meta";
+		const label = document.createElement("span");
+		label.className = "queued-prompt-label";
+		label.textContent = prompt.type === "steer" ? "Queued steer" : "Queued next";
+		const preview = document.createElement("span");
+		preview.className = "queued-prompt-preview";
+		preview.textContent = queuedPromptPreview(prompt);
+		meta.append(label, preview);
+		item.append(meta);
+		queuedPromptList.append(item);
+	}
 }
 
 async function refreshReview(): Promise<void> {
