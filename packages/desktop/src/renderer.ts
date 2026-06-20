@@ -501,6 +501,9 @@ const toolStackOpenStateByKey = new Map<string, boolean>();
 const diffLineMetadata = new WeakMap<HTMLElement, { file: DiffFile; line: DiffLine }>();
 let visibleMessageLimit = 120;
 let shouldFollowMessages = true;
+let renderedStableMessageSignature = "";
+let renderedFirstVisibleIndex = 0;
+let renderedMessageCount = 0;
 let selectedSlashCommandIndex = 0;
 let isComposerBusy = false;
 let isAbortingRun = false;
@@ -1221,6 +1224,7 @@ function showStreamingIndicator(): void {
 	if (messagesEl.querySelector(".streaming-indicator")) return;
 	const indicator = document.createElement("div");
 	indicator.className = "streaming-indicator";
+	indicator.id = "streaming-indicator";
 	const label = document.createElement("span");
 	label.textContent = "Thinking";
 	const dots = document.createElement("span");
@@ -1235,6 +1239,18 @@ function showStreamingIndicator(): void {
 
 function hideStreamingIndicator(): void {
 	messagesEl.querySelector(".streaming-indicator")?.remove();
+}
+
+function syncStreamingIndicator(): void {
+	const lastMessage = currentMessages.at(-1);
+	const assistantHasContent =
+		lastMessage?.role === "assistant" &&
+		Boolean(contentText(lastMessage).trim() || lastMessage.content.length > 0 || lastMessage.toolCalls?.length);
+	if (!isComposerBusy || assistantHasContent) {
+		hideStreamingIndicator();
+		return;
+	}
+	showStreamingIndicator();
 }
 
 function roleLabel(role: string): string {
@@ -1667,7 +1683,88 @@ function renderToolOutput(result: DesktopMessage): HTMLElement | undefined {
 	return pre;
 }
 
-function createMessage(message: DesktopMessage): HTMLElement {
+function createAssistantMessageActions(message: DesktopMessage): HTMLElement {
+	const footer = document.createElement("div");
+	footer.className = "message-actions";
+	const copyText = contentText(message).trim();
+	const copyButton = document.createElement("button");
+	copyButton.type = "button";
+	copyButton.className = "message-action-btn";
+	copyButton.title = "Copy";
+	copyButton.setAttribute("aria-label", "Copy response");
+	copyButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>`;
+	copyButton.addEventListener("click", async () => {
+		try {
+			await navigator.clipboard.writeText(copyText);
+			copyButton.classList.add("copied");
+			copyButton.title = "Copied";
+			setTimeout(() => {
+				copyButton.classList.remove("copied");
+				copyButton.title = "Copy";
+			}, 1500);
+		} catch (error) {
+			showError(error);
+		}
+	});
+	footer.append(copyButton);
+	if (message.entryId) {
+		const feedbackButtons: HTMLButtonElement[] = [];
+		for (const [rating, label] of [
+			["positive", "Good response"],
+			["negative", "Bad response"],
+		] as const) {
+			const feedbackButton = document.createElement("button");
+			feedbackButton.type = "button";
+			feedbackButton.className = `message-action-btn feedback-${rating}`;
+			feedbackButton.classList.toggle("active", message.feedback === rating);
+			feedbackButton.title = label;
+			feedbackButton.setAttribute("aria-label", label);
+			feedbackButton.setAttribute("aria-pressed", String(message.feedback === rating));
+			feedbackButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 7A2 2 0 0 1 17.5 21H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h2.8a2 2 0 0 0 1.8-1.1L12 2a3.1 3.1 0 0 1 3 3.9Z"></path></svg>`;
+			feedbackButton.addEventListener("click", async () => {
+				const nextRating = message.feedback === rating ? null : rating;
+				for (const button of feedbackButtons) button.disabled = true;
+				try {
+					renderMessages(await window.piDesktop.setResponseFeedback(message.entryId!, nextRating));
+				} catch (error) {
+					showError(error);
+					for (const button of feedbackButtons) button.disabled = false;
+				}
+			});
+			feedbackButtons.push(feedbackButton);
+			footer.append(feedbackButton);
+		}
+
+		const forkButton = document.createElement("button");
+		forkButton.type = "button";
+		forkButton.className = "message-action-btn";
+		forkButton.title = "Branch in new chat";
+		forkButton.setAttribute("aria-label", "Branch in new chat from this response");
+		forkButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2.5"></circle><circle cx="18" cy="5" r="2.5"></circle><circle cx="12" cy="19" r="2.5"></circle><path d="M6 7.5v2A6.5 6.5 0 0 0 12 16v.5M18 7.5v2A6.5 6.5 0 0 1 12 16"></path></svg>`;
+		forkButton.addEventListener("click", async () => {
+			if (forkButton.disabled) return;
+			forkButton.disabled = true;
+			forkButton.classList.add("loading");
+			forkButton.title = "Creating branch...";
+			try {
+				renderState(await window.piDesktop.forkSession(message.entryId!));
+				shouldFollowMessages = true;
+				visibleMessageLimit = messagePageSize;
+				await refreshAfterSessionChange();
+				promptInput.focus();
+			} catch (error) {
+				forkButton.disabled = false;
+				forkButton.classList.remove("loading");
+				forkButton.title = "Branch in new chat";
+				showError(error);
+			}
+		});
+		footer.append(forkButton);
+	}
+	return footer;
+}
+
+function createMessage(message: DesktopMessage, showAssistantActions = false): HTMLElement {
 	const row = document.createElement("article");
 	row.className = `message ${message.role}`;
 	row.classList.toggle("optimistic", (message as Partial<OptimisticDesktopMessage>).optimistic === true);
@@ -1725,85 +1822,8 @@ function createMessage(message: DesktopMessage): HTMLElement {
 		: "";
 	header.append(label, time);
 	row.append(header, renderContent(message));
-	const copyText = contentText(message).trim();
-	if (message.role === "assistant" && copyText) {
-		const footer = document.createElement("div");
-		footer.className = "message-actions";
-		const copyButton = document.createElement("button");
-		copyButton.type = "button";
-		copyButton.className = "message-action-btn";
-		copyButton.title = "Copy";
-		copyButton.setAttribute("aria-label", "Copy response");
-		copyButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>`;
-		copyButton.addEventListener("click", async () => {
-			try {
-				await navigator.clipboard.writeText(copyText);
-				copyButton.classList.add("copied");
-				copyButton.title = "Copied";
-				setTimeout(() => {
-					copyButton.classList.remove("copied");
-					copyButton.title = "Copy";
-				}, 1500);
-			} catch (error) {
-				showError(error);
-			}
-		});
-		footer.append(copyButton);
-		if (message.entryId) {
-			const feedbackButtons: HTMLButtonElement[] = [];
-			for (const [rating, label] of [
-				["positive", "Good response"],
-				["negative", "Bad response"],
-			] as const) {
-				const feedbackButton = document.createElement("button");
-				feedbackButton.type = "button";
-				feedbackButton.className = `message-action-btn feedback-${rating}`;
-				feedbackButton.classList.toggle("active", message.feedback === rating);
-				feedbackButton.title = label;
-				feedbackButton.setAttribute("aria-label", label);
-				feedbackButton.setAttribute("aria-pressed", String(message.feedback === rating));
-				feedbackButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 7A2 2 0 0 1 17.5 21H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h2.8a2 2 0 0 0 1.8-1.1L12 2a3.1 3.1 0 0 1 3 3.9Z"></path></svg>`;
-				feedbackButton.addEventListener("click", async () => {
-					const nextRating = message.feedback === rating ? null : rating;
-					for (const button of feedbackButtons) button.disabled = true;
-					try {
-						renderMessages(await window.piDesktop.setResponseFeedback(message.entryId!, nextRating));
-					} catch (error) {
-						showError(error);
-						for (const button of feedbackButtons) button.disabled = false;
-					}
-				});
-				feedbackButtons.push(feedbackButton);
-				footer.append(feedbackButton);
-			}
-
-			const forkButton = document.createElement("button");
-			forkButton.type = "button";
-			forkButton.className = "message-action-btn";
-			forkButton.title = "Branch in new chat";
-			forkButton.setAttribute("aria-label", "Branch in new chat from this response");
-			forkButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2.5"></circle><circle cx="18" cy="5" r="2.5"></circle><circle cx="12" cy="19" r="2.5"></circle><path d="M6 7.5v2A6.5 6.5 0 0 0 12 16v.5M18 7.5v2A6.5 6.5 0 0 1 12 16"></path></svg>`;
-			forkButton.addEventListener("click", async () => {
-				if (forkButton.disabled) return;
-				forkButton.disabled = true;
-				forkButton.classList.add("loading");
-				forkButton.title = "Creating branch...";
-				try {
-					renderState(await window.piDesktop.forkSession(message.entryId!));
-					shouldFollowMessages = true;
-					visibleMessageLimit = messagePageSize;
-					await refreshAfterSessionChange();
-					promptInput.focus();
-				} catch (error) {
-					forkButton.disabled = false;
-					forkButton.classList.remove("loading");
-					forkButton.title = "Branch in new chat";
-					showError(error);
-				}
-			});
-			footer.append(forkButton);
-		}
-		row.append(footer);
+	if (showAssistantActions && message.role === "assistant" && contentText(message).trim()) {
+		row.append(createAssistantMessageActions(message));
 	}
 	return row;
 }
@@ -1991,6 +2011,107 @@ function shouldCompactToolMessage(index: number, isActivelyStreaming: boolean, m
 	return !isActivelyStreaming && (!isComposerBusy || index < lastUserMessageIndex(messages));
 }
 
+function messageStableSignature(message: DesktopMessage, index: number, activeAssistantIndex: number): string {
+	const ignoreStreamingText = isComposerBusy && index === activeAssistantIndex;
+	const content: unknown[] = [];
+	let hasStreamingTextBlock = false;
+	for (const block of message.content ?? []) {
+		if (block.type === "text") {
+			if (ignoreStreamingText) {
+				if (!hasStreamingTextBlock) {
+					content.push(["text"]);
+					hasStreamingTextBlock = true;
+				}
+			} else {
+				content.push(["text", block.text]);
+			}
+		} else if (block.type === "thinking") {
+			content.push(["thinking"]);
+		} else if (block.type === "image") {
+			content.push(["image", block.mimeType, block.data?.length]);
+		} else if (block.type === "toolCall") {
+			content.push(["toolCall", block.id, block.name, renderToolInput(block.input)]);
+		} else {
+			content.push([block.type]);
+		}
+	}
+	return JSON.stringify({
+		role: message.role,
+		entryId: message.entryId,
+		feedback: message.feedback,
+		timestamp: message.timestamp,
+		toolCallId: message.toolCallId,
+		toolName: message.toolName,
+		isError: message.isError,
+		errorMessage: message.errorMessage,
+		text: ignoreStreamingText ? undefined : message.text,
+		content,
+		toolCalls: (message.toolCalls ?? []).map((call) => [call.id, call.name, renderToolInput(call.input)]),
+	});
+}
+
+function messagesStableSignature(
+	messages: DesktopMessage[],
+	firstVisibleIndex: number,
+	activeAssistantIndex: number,
+): string {
+	return messages
+		.slice(firstVisibleIndex)
+		.map((message, offset) => messageStableSignature(message, firstVisibleIndex + offset, activeAssistantIndex))
+		.join("\n");
+}
+
+function addAssistantMessageActions(row: Element, message: DesktopMessage): void {
+	if (message.role !== "assistant" || !contentText(message).trim() || row.querySelector(".message-actions")) return;
+	row.append(createAssistantMessageActions(message));
+}
+
+function updateStableMessageRow(
+	row: HTMLElement,
+	message: DesktopMessage,
+	index: number,
+	messages: DesktopMessage[],
+	compactCompleted = false,
+	showAssistantActions = false,
+): void {
+	row.dataset.messageIndex = String(index);
+	row.classList.toggle("optimistic", (message as Partial<OptimisticDesktopMessage>).optimistic === true);
+	const time = row.querySelector(".message-time");
+	const nextTime = message.timestamp
+		? new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+		: "";
+	if (time && time.textContent !== nextTime) time.textContent = nextTime;
+
+	const textSignature = contentText(message);
+	if (message.role === "assistant" && row.dataset.textSignature !== textSignature) {
+		const body = Array.from(row.children).find((child) => child.classList?.contains("message-body"));
+		if (body) {
+			const nextBody = renderContent(message);
+			body.replaceChildren(...Array.from(nextBody.childNodes));
+		}
+		row.dataset.textSignature = textSignature;
+	}
+
+	if (showAssistantActions) addAssistantMessageActions(row, message);
+	else row.querySelector(".message-actions")?.remove();
+
+	const toolSignature = JSON.stringify(
+		(message.toolCalls ?? []).map((call) => {
+			const result = messages.find((candidate, candidateIndex) => {
+				return candidateIndex > index && candidate.role === "toolResult" && candidate.toolCallId === call.id;
+			});
+			const execution = result ? undefined : completedToolExecutions.get(call.id);
+			return [call.id, call.name, call.input, result?.text, result?.isError, execution?.isError];
+		}),
+	);
+	if (row.dataset.toolSignature !== toolSignature) {
+		row.querySelector(".tool-stack")?.remove();
+		const tools = renderToolStackForMessage(message, index, messages, compactCompleted);
+		if (tools) row.append(tools);
+		row.dataset.toolSignature = toolSignature;
+	}
+}
+
 function normalizePlanItems(value: unknown): DesktopTodo[] {
 	if (!Array.isArray(value)) return [];
 	return value
@@ -2021,13 +2142,23 @@ function latestPlanItems(messages: DesktopMessage[]): DesktopTodo[] | undefined 
 }
 
 function renderSessionPlan(messages: DesktopMessage[]): void {
+	const existing = messagesEl.querySelector(".session-plan");
 	const items = Array.isArray(state?.todos) ? normalizePlanItems(state.todos) : latestPlanItems(messages);
-	if (!items || items.length === 0) return;
+	if (!items || items.length === 0) {
+		existing?.remove();
+		return;
+	}
+	const signature = JSON.stringify(items);
+	if ((existing as HTMLElement | null)?.dataset.planSignature === signature) return;
+	const existingDetails = existing?.querySelector("details");
+	const wasOpen = existingDetails ? existingDetails.open : undefined;
+	existing?.remove();
 	const completed = items.filter((item) => item.status === "completed").length;
 	const card = document.createElement("article");
 	card.className = "message assistant session-plan";
+	card.dataset.planSignature = signature;
 	const details = document.createElement("details");
-	details.open = isComposerBusy || completed < items.length;
+	details.open = wasOpen ?? (isComposerBusy || completed < items.length);
 	const summary = document.createElement("summary");
 	const title = document.createElement("span");
 	title.className = "session-plan-title";
@@ -2051,7 +2182,9 @@ function renderSessionPlan(messages: DesktopMessage[]): void {
 	}
 	details.append(summary, list);
 	card.append(details);
-	messagesEl.append(card);
+	const finalResponse = messagesEl.querySelector(".message.last-response");
+	const indicator = document.getElementById("streaming-indicator");
+	messagesEl.insertBefore(card, finalResponse ?? indicator);
 }
 
 function openReviewPanel(scope: "working-tree" | "staged" | "last-turn" = "working-tree"): void {
@@ -2065,6 +2198,7 @@ function openReviewPanel(scope: "working-tree" | "staged" | "last-turn" = "worki
 }
 
 function renderLastTurnArtifact(): void {
+	messagesEl.querySelector(".change-artifact")?.remove();
 	const diff = state?.lastTurnDiff;
 	if (!diff || diff.files.length === 0 || isComposerBusy) return;
 	const card = document.createElement("article");
@@ -2113,26 +2247,106 @@ function renderLastTurnArtifact(): void {
 		files.append(more);
 	}
 	card.append(header, files);
-	messagesEl.append(card);
+	const indicator = document.getElementById("streaming-indicator");
+	messagesEl.insertBefore(card, indicator);
+}
+
+function patchStableStreamingRender(
+	messages: DesktopMessage[],
+	firstVisibleIndex: number,
+	activeAssistantIndex: number,
+): void {
+	const indicator = document.getElementById("streaming-indicator");
+	for (let index = firstVisibleIndex; index < messages.length; index++) {
+		const message = messages[index]!;
+		if (message.role === "toolResult") continue;
+		if (!hasVisibleContent(message)) continue;
+		const isActivelyStreaming = isComposerBusy && index === activeAssistantIndex;
+		const showAssistantActions =
+			message.role === "assistant" &&
+			Boolean(contentText(message).trim()) &&
+			index === activeAssistantIndex &&
+			!isActivelyStreaming;
+		let row = messagesEl.querySelector<HTMLElement>(`[data-message-index="${index}"]`);
+		if (!row) {
+			row = createMessage(message, showAssistantActions);
+			row.dataset.messageIndex = String(index);
+			messagesEl.insertBefore(row, indicator);
+		}
+		row.classList.toggle(
+			"last-response",
+			message.role === "assistant" && index === activeAssistantIndex && !isActivelyStreaming,
+		);
+		updateStableMessageRow(
+			row,
+			message,
+			index,
+			messages,
+			shouldCompactToolMessage(index, isActivelyStreaming, messages),
+			showAssistantActions,
+		);
+	}
+	renderedStableMessageSignature = messagesStableSignature(messages, firstVisibleIndex, activeAssistantIndex);
+	renderedFirstVisibleIndex = firstVisibleIndex;
+	renderedMessageCount = messages.length;
+	syncStreamingIndicator();
+	renderSessionPlan(messages);
+	renderLastTurnArtifact();
+	if (shouldFollowMessages) scrollMessagesToBottom();
 }
 
 function renderMessages(messages: DesktopMessage[]): void {
 	backendMessages = messages;
 	syncSessionMenu();
 	const sessionChanged = renderedSessionId !== state?.sessionId;
-	if (sessionChanged) optimisticUserMessages = [];
-	messages = messagesWithOptimisticUserMessages(messages);
-	currentMessages = messages;
-	const followAfterRender = sessionChanged || shouldFollowMessages || isMessagesScrolledToBottom();
-	const previousScrollTop = messagesEl.scrollTop;
-	messagesEl.innerHTML = "";
 	if (sessionChanged) {
 		renderedSessionId = state?.sessionId;
+		optimisticUserMessages = [];
 		completedToolExecutions.clear();
 		toolStackOpenStateByKey.clear();
 		visibleMessageLimit = messagePageSize;
 		shouldFollowMessages = true;
+		renderedStableMessageSignature = "";
+		renderedFirstVisibleIndex = 0;
+		renderedMessageCount = 0;
 	}
+	messages = messagesWithOptimisticUserMessages(messages);
+	currentMessages = messages;
+
+	let lastAssistantIndex = -1;
+	for (let index = messages.length - 1; index >= 0; index--) {
+		if (messages[index]?.role === "assistant") {
+			lastAssistantIndex = index;
+			break;
+		}
+	}
+	const activeAssistantIndex = isComposerBusy ? lastAssistantIndex : -1;
+	const defaultFirstVisibleIndex = Math.max(0, messages.length - visibleMessageLimit);
+	const firstVisibleIndex =
+		isComposerBusy && shouldFollowMessages && renderedMessageCount > 0
+			? Math.min(defaultFirstVisibleIndex, renderedFirstVisibleIndex)
+			: defaultFirstVisibleIndex;
+	const stableSignature = messagesStableSignature(messages, firstVisibleIndex, activeAssistantIndex);
+	const stableRenderChanged = stableSignature !== renderedStableMessageSignature;
+	const canPatchStreamingRender =
+		isComposerBusy &&
+		!sessionChanged &&
+		messages.length > 0 &&
+		renderedMessageCount > 0 &&
+		renderedFirstVisibleIndex === firstVisibleIndex &&
+		messages.length >= renderedMessageCount &&
+		(stableRenderChanged || isComposerBusy);
+	if (canPatchStreamingRender) {
+		patchStableStreamingRender(messages, firstVisibleIndex, activeAssistantIndex);
+		return;
+	}
+
+	const followAfterRender = sessionChanged || shouldFollowMessages || isMessagesScrolledToBottom();
+	const previousScrollTop = messagesEl.scrollTop;
+	messagesEl.innerHTML = "";
+	renderedStableMessageSignature = stableSignature;
+	renderedFirstVisibleIndex = firstVisibleIndex;
+	renderedMessageCount = messages.length;
 	if (messages.length === 0) {
 		const empty = document.createElement("div");
 		empty.className = "empty";
@@ -2144,7 +2358,6 @@ function renderMessages(messages: DesktopMessage[]): void {
 		return;
 	}
 
-	const firstVisibleIndex = Math.max(0, messages.length - visibleMessageLimit);
 	if (firstVisibleIndex > 0) {
 		const older = document.createElement("button");
 		older.type = "button";
@@ -2161,8 +2374,18 @@ function renderMessages(messages: DesktopMessage[]): void {
 		const message = messages[index]!;
 		if (message.role === "toolResult") continue;
 		if (!hasVisibleContent(message)) continue;
-		const row = createMessage(message);
-		const isActivelyStreaming = isComposerBusy && index === messages.length - 1;
+		const isActivelyStreaming = isComposerBusy && index === lastAssistantIndex;
+		const showAssistantActions =
+			message.role === "assistant" &&
+			Boolean(contentText(message).trim()) &&
+			index === lastAssistantIndex &&
+			!isActivelyStreaming;
+		const row = createMessage(message, showAssistantActions);
+		row.dataset.messageIndex = String(index);
+		row.classList.toggle(
+			"last-response",
+			message.role === "assistant" && index === lastAssistantIndex && !isActivelyStreaming,
+		);
 		const tools = renderToolStackForMessage(
 			message,
 			index,
@@ -2172,13 +2395,9 @@ function renderMessages(messages: DesktopMessage[]): void {
 		if (tools) row.append(tools);
 		messagesEl.append(row);
 	}
+	syncStreamingIndicator();
 	renderSessionPlan(messages);
 	renderLastTurnArtifact();
-	const lastMessage = messages.at(-1);
-	const assistantHasContent =
-		lastMessage?.role === "assistant" &&
-		Boolean(contentText(lastMessage).trim() || lastMessage.content.length > 0 || lastMessage.toolCalls?.length);
-	if (isComposerBusy && !assistantHasContent) showStreamingIndicator();
 	if (followAfterRender) {
 		scrollMessagesToBottom();
 	} else {
