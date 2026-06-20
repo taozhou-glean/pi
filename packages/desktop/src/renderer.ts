@@ -24,6 +24,7 @@ type DesktopState = {
 
 type DesktopMessage = {
 	entryId?: string;
+	feedback?: "positive" | "negative";
 	role: string;
 	text: string;
 	content: DesktopContent[];
@@ -124,6 +125,7 @@ type PiDesktopApi = {
 	newSession(): Promise<DesktopState>;
 	switchSession(sessionPath: string): Promise<DesktopState>;
 	forkSession(entryId: string): Promise<DesktopState>;
+	setResponseFeedback(entryId: string, rating: "positive" | "negative" | null): Promise<DesktopMessage[]>;
 	prompt(
 		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
 	): Promise<DesktopState>;
@@ -1381,6 +1383,33 @@ function createMessage(message: DesktopMessage): HTMLElement {
 		});
 		footer.append(copyButton);
 		if (message.entryId) {
+			const feedbackButtons: HTMLButtonElement[] = [];
+			for (const [rating, label] of [
+				["positive", "Good response"],
+				["negative", "Bad response"],
+			] as const) {
+				const feedbackButton = document.createElement("button");
+				feedbackButton.type = "button";
+				feedbackButton.className = `message-action-btn feedback-${rating}`;
+				feedbackButton.classList.toggle("active", message.feedback === rating);
+				feedbackButton.title = label;
+				feedbackButton.setAttribute("aria-label", label);
+				feedbackButton.setAttribute("aria-pressed", String(message.feedback === rating));
+				feedbackButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 7A2 2 0 0 1 17.5 21H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h2.8a2 2 0 0 0 1.8-1.1L12 2a3.1 3.1 0 0 1 3 3.9Z"></path></svg>`;
+				feedbackButton.addEventListener("click", async () => {
+					const nextRating = message.feedback === rating ? null : rating;
+					for (const button of feedbackButtons) button.disabled = true;
+					try {
+						renderMessages(await window.piDesktop.setResponseFeedback(message.entryId!, nextRating));
+					} catch (error) {
+						showError(error);
+						for (const button of feedbackButtons) button.disabled = false;
+					}
+				});
+				feedbackButtons.push(feedbackButton);
+				footer.append(feedbackButton);
+			}
+
 			const forkButton = document.createElement("button");
 			forkButton.type = "button";
 			forkButton.className = "message-action-btn";

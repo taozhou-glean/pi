@@ -2293,6 +2293,20 @@ body.resizing-panels {
 	color: #4ade80;
 }
 
+.message-action-btn.active {
+	background: color-mix(in srgb, var(--ink) 9%, transparent);
+	color: var(--ink);
+}
+
+.message-action-btn.feedback-positive,
+.message-action-btn.feedback-negative {
+	display: none;
+}
+
+.message-action-btn.feedback-negative svg {
+	transform: rotate(180deg);
+}
+
 .message-action-btn.loading svg {
 	animation: message-action-spin 800ms linear infinite;
 }

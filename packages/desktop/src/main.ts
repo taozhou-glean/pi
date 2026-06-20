@@ -27,6 +27,7 @@ app.setName(appName);
 
 type DesktopMessage = {
 	entryId?: string;
+	feedback?: ResponseFeedbackRating;
 	role: string;
 	text: string;
 	content: DesktopContent[];
@@ -88,6 +89,8 @@ type DesktopLoginResult = {
 	message: string;
 };
 
+type ResponseFeedbackRating = "positive" | "negative";
+
 type DesktopCurrentUser = {
 	name?: string;
 	email?: string;
@@ -122,6 +125,7 @@ let currentCwd = resolve(process.env.PI_DESKTOP_CWD || process.cwd());
 let currentSessionDir: string | undefined;
 const providerAllowlist = ["glean"];
 const envSessionDir = "PI_CODING_AGENT_SESSION_DIR";
+const responseFeedbackEntryType = "cowork_response_feedback";
 let isQuitting = false;
 let pendingSessionSnapshot: NodeJS.Timeout | undefined;
 
@@ -263,7 +267,7 @@ function toolCallsFromContent(content: unknown): DesktopToolCall[] {
 	return calls;
 }
 
-function serializeMessage(message: unknown, entryId?: string): DesktopMessage {
+function serializeMessage(message: unknown, entryId?: string, feedback?: ResponseFeedbackRating): DesktopMessage {
 	const typed = message as {
 		entryId?: unknown;
 		id?: unknown;
@@ -280,6 +284,7 @@ function serializeMessage(message: unknown, entryId?: string): DesktopMessage {
 		(typeof typed.entryId === "string" ? typed.entryId : typeof typed.id === "string" ? typed.id : undefined);
 	return {
 		entryId: messageEntryId,
+		feedback,
 		role: typed.role ?? "unknown",
 		text: textFromContent(typed.content),
 		content: normalizeContent(typed.content),
@@ -305,12 +310,28 @@ function serializeVisibleMessages(): DesktopMessage[] {
 			entryIdsByMessage.set(entry.message, entry.id);
 		}
 	}
-	return messages.map((message) =>
-		serializeMessage(
-			message,
-			typeof message === "object" && message !== null ? entryIdsByMessage.get(message) : undefined,
-		),
-	);
+	const feedbackByEntryId = replayResponseFeedback(session.sessionManager.getBranch());
+	return messages.map((message) => {
+		const entryId = typeof message === "object" && message !== null ? entryIdsByMessage.get(message) : undefined;
+		return serializeMessage(message, entryId, entryId ? feedbackByEntryId[entryId] : undefined);
+	});
+}
+
+function replayResponseFeedback(
+	entries: ReturnType<SessionManager["getBranch"]>,
+): Record<string, ResponseFeedbackRating> {
+	const feedback: Record<string, ResponseFeedbackRating> = {};
+	for (const entry of entries) {
+		if (entry.type !== "custom" || entry.customType !== responseFeedbackEntryType) continue;
+		const data = entry.data as { entryId?: unknown; rating?: unknown } | undefined;
+		if (typeof data?.entryId !== "string" || !data.entryId) continue;
+		if (data.rating === null) {
+			delete feedback[data.entryId];
+		} else if (data.rating === "positive" || data.rating === "negative") {
+			feedback[data.entryId] = data.rating;
+		}
+	}
+	return feedback;
 }
 
 function serializeSessionInfo(session: SessionInfo): DesktopSessionInfo {
@@ -1568,6 +1589,22 @@ ipcMain.handle("pi:list-sessions", async () => {
 ipcMain.handle("pi:new-session", async () => createDesktopSession({ cwd: currentCwd, fresh: true }));
 ipcMain.handle("pi:switch-session", async (_event, sessionPath: string) => createDesktopSession({ sessionPath }));
 ipcMain.handle("pi:fork-session", async (_event, entryId: string) => forkDesktopSession(entryId));
+ipcMain.handle("pi:set-response-feedback", async (_event, entryId: string, rating: unknown) => {
+	await ensureDesktopSession();
+	if (rating !== null && rating !== "positive" && rating !== "negative") {
+		throw new Error(`Unsupported response feedback: ${String(rating)}`);
+	}
+	const session = getSession();
+	const entry = session.sessionManager.getEntry(entryId);
+	const isOnCurrentBranch = session.sessionManager.getBranch().some((candidate) => candidate.id === entryId);
+	if (!isOnCurrentBranch || !entry || entry.type !== "message" || entry.message.role !== "assistant") {
+		throw new Error("The selected assistant response is no longer active in this chat.");
+	}
+	session.sessionManager.appendCustomEntry(responseFeedbackEntryType, { entryId, rating });
+	const messages = serializeVisibleMessages();
+	send("pi:messages", messages);
+	return messages;
+});
 ipcMain.handle("pi:prompt", async (_event, payload: unknown) => {
 	await ensureDesktopSession();
 	const prompt = normalizePromptPayload(payload);

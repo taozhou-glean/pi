@@ -11,6 +11,8 @@ const api = {
 	newSession: () => ipcRenderer.invoke("pi:new-session"),
 	switchSession: (sessionPath: string) => ipcRenderer.invoke("pi:switch-session", sessionPath),
 	forkSession: (entryId: string) => ipcRenderer.invoke("pi:fork-session", entryId),
+	setResponseFeedback: (entryId: string, rating: "positive" | "negative" | null) =>
+		ipcRenderer.invoke("pi:set-response-feedback", entryId, rating),
 	prompt: (message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> }) =>
 		ipcRenderer.invoke("pi:prompt", message),
 	abort: () => ipcRenderer.invoke("pi:abort"),
