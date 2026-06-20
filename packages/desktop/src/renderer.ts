@@ -4542,20 +4542,42 @@ function showError(error: unknown): void {
 	showDesktopMessage("Desktop", text, "error");
 }
 
+function showToast(text: string, action?: { label: string; onClick: () => void }): void {
+	closeComposerMenus();
+	closeSettingsPopover();
+	let container = document.querySelector<HTMLDivElement>(".toast-container");
+	if (!container) {
+		container = document.createElement("div");
+		container.className = "toast-container";
+		document.body.append(container);
+	}
+	const toast = document.createElement("div");
+	toast.className = "toast";
+	const message = document.createElement("span");
+	message.textContent = text;
+	toast.append(message);
+	if (action) {
+		const actionButton = document.createElement("button");
+		actionButton.type = "button";
+		actionButton.className = "toast-action";
+		actionButton.textContent = action.label;
+		actionButton.addEventListener("click", () => {
+			action.onClick();
+			toast.remove();
+		});
+		toast.append(actionButton);
+	}
+	container.append(toast);
+	setTimeout(() => toast.classList.add("visible"), 0);
+	setTimeout(() => {
+		toast.classList.remove("visible");
+		setTimeout(() => toast.remove(), 180);
+	}, 5200);
+}
+
 function showDesktopMessage(labelText: string, text: string, variant: "notice" | "error" = "notice"): void {
-	const row = document.createElement("article");
-	row.className = `message ${variant}`;
-	const header = document.createElement("div");
-	header.className = "message-header";
-	const label = document.createElement("span");
-	label.textContent = labelText;
-	header.append(label);
-	const body = document.createElement("div");
-	body.className = "message-body";
-	body.textContent = text;
-	row.append(header, body);
-	messagesEl.append(row);
-	messagesEl.scrollTop = messagesEl.scrollHeight;
+	showToast(`${labelText}: ${text}`);
+	if (variant === "error") console.error(text);
 }
 
 function focusComposer(): void {
