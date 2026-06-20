@@ -18,6 +18,7 @@ type DesktopState = {
 };
 
 type DesktopMessage = {
+	entryId?: string;
 	role: string;
 	text: string;
 	content: DesktopContent[];
@@ -117,6 +118,7 @@ type PiDesktopApi = {
 	listSessions(): Promise<DesktopSessionInfo[]>;
 	newSession(): Promise<DesktopState>;
 	switchSession(sessionPath: string): Promise<DesktopState>;
+	forkSession(entryId: string): Promise<DesktopState>;
 	prompt(
 		message: string | { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> },
 	): Promise<DesktopState>;
@@ -1367,6 +1369,33 @@ function createMessage(message: DesktopMessage): HTMLElement {
 			}
 		});
 		footer.append(copyButton);
+		if (message.entryId) {
+			const forkButton = document.createElement("button");
+			forkButton.type = "button";
+			forkButton.className = "message-action-btn";
+			forkButton.title = "Branch in new chat";
+			forkButton.setAttribute("aria-label", "Branch in new chat from this response");
+			forkButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2.5"></circle><circle cx="18" cy="5" r="2.5"></circle><circle cx="12" cy="19" r="2.5"></circle><path d="M6 7.5v2A6.5 6.5 0 0 0 12 16v.5M18 7.5v2A6.5 6.5 0 0 1 12 16"></path></svg>`;
+			forkButton.addEventListener("click", async () => {
+				if (forkButton.disabled) return;
+				forkButton.disabled = true;
+				forkButton.classList.add("loading");
+				forkButton.title = "Creating branch...";
+				try {
+					renderState(await window.piDesktop.forkSession(message.entryId!));
+					shouldFollowMessages = true;
+					visibleMessageLimit = messagePageSize;
+					await refreshAfterSessionChange();
+					promptInput.focus();
+				} catch (error) {
+					forkButton.disabled = false;
+					forkButton.classList.remove("loading");
+					forkButton.title = "Branch in new chat";
+					showError(error);
+				}
+			});
+			footer.append(forkButton);
+		}
 		row.append(footer);
 	}
 	return row;
@@ -2048,6 +2077,12 @@ async function refreshAfterSessionChange(): Promise<void> {
 	renderMessages(await window.piDesktop.getMessages());
 }
 
+async function startNewSession(): Promise<void> {
+	renderState(await window.piDesktop.newSession());
+	await refreshAfterSessionChange();
+	promptInput.focus();
+}
+
 async function switchToSession(sessionPath: string): Promise<void> {
 	if (switchingSessionPath) return;
 	if (sessionPath === state?.sessionFile) {
@@ -2618,8 +2653,7 @@ imagePreviewOverlay.addEventListener("click", (event) => {
 for (const button of newSessionButtons) {
 	button.addEventListener("click", async () => {
 		try {
-			renderState(await window.piDesktop.newSession());
-			await refreshAfterSessionChange();
+			await startNewSession();
 		} catch (error) {
 			showError(error);
 		}
@@ -2972,6 +3006,17 @@ document.addEventListener("keydown", (event) => {
 	if ((event.metaKey || event.ctrlKey) && event.key === "j") {
 		event.preventDefault();
 		toggleBottomPanel();
+		return;
+	}
+	if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "n") {
+		event.preventDefault();
+		startNewSession().catch(showError);
+		return;
+	}
+	if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "k") {
+		event.preventDefault();
+		sessionSearchInput.focus();
+		sessionSearchInput.select();
 		return;
 	}
 	if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "/") {

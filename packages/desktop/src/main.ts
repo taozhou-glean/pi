@@ -26,6 +26,7 @@ const appName = "Pi Desktop";
 app.setName(appName);
 
 type DesktopMessage = {
+	entryId?: string;
 	role: string;
 	text: string;
 	content: DesktopContent[];
@@ -257,8 +258,10 @@ function toolCallsFromContent(content: unknown): DesktopToolCall[] {
 	return calls;
 }
 
-function serializeMessage(message: unknown): DesktopMessage {
+function serializeMessage(message: unknown, entryId?: string): DesktopMessage {
 	const typed = message as {
+		entryId?: unknown;
+		id?: unknown;
 		role?: string;
 		content?: unknown;
 		timestamp?: number;
@@ -267,7 +270,11 @@ function serializeMessage(message: unknown): DesktopMessage {
 		isError?: boolean;
 		errorMessage?: string;
 	};
+	const messageEntryId =
+		entryId ??
+		(typeof typed.entryId === "string" ? typed.entryId : typeof typed.id === "string" ? typed.id : undefined);
 	return {
+		entryId: messageEntryId,
 		role: typed.role ?? "unknown",
 		text: textFromContent(typed.content),
 		content: normalizeContent(typed.content),
@@ -287,7 +294,18 @@ function serializeVisibleMessages(): DesktopMessage[] {
 	if (streamingMessage && !messages.includes(streamingMessage)) {
 		messages.push(streamingMessage);
 	}
-	return messages.map(serializeMessage);
+	const entryIdsByMessage = new WeakMap<object, string>();
+	for (const entry of session.sessionManager.getBranch()) {
+		if (entry.type === "message" && typeof entry.message === "object" && entry.message !== null) {
+			entryIdsByMessage.set(entry.message, entry.id);
+		}
+	}
+	return messages.map((message) =>
+		serializeMessage(
+			message,
+			typeof message === "object" && message !== null ? entryIdsByMessage.get(message) : undefined,
+		),
+	);
 }
 
 function serializeSessionInfo(session: SessionInfo): DesktopSessionInfo {
@@ -563,6 +581,28 @@ async function createDesktopSessionInner(
 	unsubscribeSession = current.session.subscribe(handleSessionEvent);
 	flushSessionSnapshot();
 	return serializeState();
+}
+
+async function forkDesktopSession(entryId: string): Promise<DesktopState> {
+	await ensureDesktopSession();
+	const source = getSession();
+	if (source.isStreaming) {
+		throw new Error("Wait for the current response to finish before branching this chat.");
+	}
+	const sourceFile = source.sessionFile;
+	if (!sourceFile) {
+		throw new Error("This chat has not been persisted yet.");
+	}
+	const sourceEntry = source.sessionManager.getEntry(entryId);
+	if (!sourceEntry || sourceEntry.type !== "message" || sourceEntry.message.role !== "assistant") {
+		throw new Error("The selected response is no longer available for branching.");
+	}
+	const sessionManager = SessionManager.open(sourceFile, source.sessionManager.getSessionDir(), currentCwd);
+	const forkedPath = sessionManager.createBranchedSession(entryId);
+	if (!forkedPath) {
+		throw new Error("Could not create a persisted branch for this chat.");
+	}
+	return createDesktopSession({ sessionPath: forkedPath });
 }
 
 async function listDesktopSessions(): Promise<DesktopSessionInfo[]> {
@@ -1521,6 +1561,7 @@ ipcMain.handle("pi:list-sessions", async () => {
 });
 ipcMain.handle("pi:new-session", async () => createDesktopSession({ cwd: currentCwd, fresh: true }));
 ipcMain.handle("pi:switch-session", async (_event, sessionPath: string) => createDesktopSession({ sessionPath }));
+ipcMain.handle("pi:fork-session", async (_event, entryId: string) => forkDesktopSession(entryId));
 ipcMain.handle("pi:prompt", async (_event, payload: unknown) => {
 	await ensureDesktopSession();
 	const prompt = normalizePromptPayload(payload);
